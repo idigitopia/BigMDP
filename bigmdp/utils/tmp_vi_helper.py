@@ -5,6 +5,7 @@ import time
 from statistics import mean, median
 import math
 from PIL import ImageFont, Image, ImageDraw
+import tqdm
 from statistics import mean , median
 
 class EpsilonTracker:
@@ -163,3 +164,170 @@ def rollout_with_nn_behavior(env, policy, hs_nn_fxn, pi_dict, v_dict, hs_st_disc
             "max_reward": max(all_rewards),
             "run_info":run_info}
     return total_reward / eps, info, video_list
+
+
+
+def evaluate_on_env(env, policy_func, eps_count=30, verbose=False, render = False, lag = 0):
+    """
+    takes input environment and a policy and returns average rewards
+    latent policy flag = True if the policy is a discrete policy
+    :param env:
+    :param policy_func:
+    :param eps_count:
+    :param return_info:
+    :param verbose:
+    :param policy_is_discrete:
+    :return:
+    """
+
+    eps_rewards, eps_step_counts = [],[]
+
+    for _ in range(eps_count):
+        sum_rewards, sum_steps = 0,0
+        state_c = env.reset()
+
+        done = False
+        steps = 0
+
+        while steps < env.max_episode_length and not done:
+            sum_steps += 1
+            policyAction = policy_func(state_c)
+            state_c, reward, done, info = env.step(policyAction)
+            sum_rewards += reward
+            if(render):
+                env.render()
+                time.sleep(lag)
+
+        eps_rewards.append(sum_rewards)
+        eps_step_counts.append(sum_steps)
+
+        if verbose:
+            print("Steps:{}, Reward: {}".format(steps, sum_rewards))
+
+
+    info = {"avg_reward":  mean(eps_rewards),
+            "avg_steps": mean(eps_step_counts),
+            "max_reward":  max(eps_rewards),
+            "min_reward":  min(eps_rewards),
+            "max_steps": max(eps_step_counts),
+            "min_steps": min(eps_step_counts) ,}
+
+    return info["avg_reward"], info
+
+
+
+
+
+
+def evaluate_on_env(env, policy_func, eps_count=30, verbose=False, render = False, lag = 0):
+    """
+    takes input environment and a policy and returns average rewards
+    latent policy flag = True if the policy is a discrete policy
+    :param env:
+    :param policy_func:
+    :param eps_count:
+    :param return_info:
+    :param verbose:
+    :param policy_is_discrete:
+    :return:
+    """
+
+    eps_rewards, eps_step_counts = [],[]
+
+    for _ in range(eps_count):
+        sum_rewards, sum_steps = 0,0
+        state_c = env.reset()
+
+        done = False
+        steps = 0
+
+        while steps < env.max_episode_length and not done:
+            sum_steps += 1
+            policyAction = policy_func(state_c)
+            state_c, reward, done, info = env.step(policyAction)
+            sum_rewards += reward
+            if(render):
+                env.render()
+                time.sleep(lag)
+
+        eps_rewards.append(sum_rewards)
+        eps_step_counts.append(sum_steps)
+
+        if verbose:
+            print("Steps:{}, Reward: {}".format(steps, sum_rewards))
+
+
+    info = {"avg_reward":  mean(eps_rewards),
+            "avg_steps": mean(eps_step_counts),
+            "max_reward":  max(eps_rewards),
+            "min_reward":  min(eps_rewards),
+            "max_steps": max(eps_step_counts),
+            "min_steps": min(eps_step_counts) ,}
+
+    return info["avg_reward"], info
+
+
+def evaluate_on_env_with_nn_count(env, policy_func, pi_dict,img_to_disc_fxn,  A, eps_count=30, verbose=False, policy_is_discrete=True, render = False, lag = 0):
+    """
+        takes input environment and a policy and returns average rewards
+        latent policy flag = True if the policy is a discrete policy
+        :param env:
+        :param policy_func:
+        :param eps_count:
+        :param return_info:
+        :param verbose:
+        :param policy_is_discrete:
+        :return:
+        """
+
+    eps_rewards, eps_step_counts = [], []
+    run_info = {}
+
+    for e in tqdm(range(eps_count)):
+        sum_rewards, sum_steps = 0, 0
+        state_c, state_d = env.reset()
+        ########
+        action_call_counts = {k:0 for k in A}
+        run_reward, nn_search_count, policy_search_count = 0,0,0
+
+
+        done = False
+        steps = 0
+
+        while steps < env.max_episode_length and not done:
+            sum_steps += 1
+            policyAction = policy_func(state_d) if policy_is_discrete else policy_func(state_c)
+            state_set, reward, done, info = env.step(policyAction)
+            state_c, state_d = state_set
+
+            action_call_counts[policyAction[0] if isinstance(policyAction, Iterable) else policyAction ] +=1
+            nn_search_count += 1 if hAsh(img_to_disc_fxn([state_c])) not in pi_dict else 0
+            policy_search_count += 1
+
+
+            sum_rewards += env.reward_denormalizing_func(reward) if hasattr(env, 'normalizing_params') else reward
+            if (render):
+                env.render()
+                time.sleep(lag)
+
+        eps_rewards.append(sum_rewards)
+        eps_step_counts.append(sum_steps)
+
+        run_info["Run"+str(e)]= {"perf":run_reward,
+                                 "nn_search_count":nn_search_count,
+                                 "policy_search_count":policy_search_count,
+                                 "action_call_counts":action_call_counts,
+                                 "nn_search_perc":(nn_search_count/policy_search_count)* 100}
+
+        if verbose:
+            print("Steps:{}, Reward: {}".format(steps, sum_rewards))
+
+    info = {"avg_reward": mean(eps_rewards),
+            "avg_steps": mean(eps_step_counts),
+            "max_reward": max(eps_rewards),
+            "min_reward": min(eps_rewards),
+            "max_steps": max(eps_step_counts),
+            "min_steps": min(eps_step_counts),
+            "run_info": run_info}
+
+    return info["avg_reward"], info

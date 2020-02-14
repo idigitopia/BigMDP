@@ -1,0 +1,7 @@
+CUDA_VISIBLE_DEVICES=6 python simple_solver.py --video_every 50 --env CartPole --multiplyer 2 --device CPU --backup_every 5
+CUDA_VISIBLE_DEVICES=6 python simple_solver.py --video_every 50 --env CartPole --multiplyer 2 --device CPU --backup_every 20
+CUDA_VISIBLE_DEVICES=6 python simple_solver.py --video_every 50 --env CartPole --multiplyer 2 --device CPU --backup_every 1
+CUDA_VISIBLE_DEVICES=6 python simple_solver.py --video_every 50 --env CartPole --multiplyer 2 --device GPU --backup_every 5
+
+
+CUDA_VISIBLE_DEVICES=6 python simple_solver.py --video_every 50 --env CartPole --multiplyer 10 --device CPU --backup_every 5

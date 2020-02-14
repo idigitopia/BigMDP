@@ -30,8 +30,6 @@ parser.add_argument("--strict_rmax", help="Use rmax exploration and rmax explora
 parser.add_argument("--video_every", help="get a rollout video every", type=int, default= 999999999)
 parser.add_argument("--backup_every", help="do a bellman backup every k frames", type=int, default= 10)
 parser.add_argument("--device", help="do backups on ?", type=str, default= "CPU")
-parser.add_argument("--save_transitions", help="do backups on ?", type=int, default= 0)
-
 
 
 args = parser.parse_args()
@@ -41,8 +39,7 @@ run_params = "_bn-" + str(args.bottle_neck_size) +\
             "_rmax-" + str(bool(args.rmax)) +\
             "_strict_rmax-" + str(bool(args.strict_rmax)) +\
             "_mult-" + str(args.multiplyer) +\
-            "_bkp_f-" + str(args.backup_every) +\
-            "_device-" + str(args.device)
+            "_bkp_f-" + str(args.backup_every)
                             
 base_file_path = "./result_dump/{}/{}".format(args.env, args.name + run_params)
 
@@ -143,27 +140,20 @@ for eps in range(100000):
             env.render()
 
         if frame_count % params['checkpoint_every'] == 0:
-            mdp = mdp
-            torch.save(mdp, base_file_path + "mdp_class.pth")
+            cache_mdp = mdp
+            torch.save(cache_mdp, base_file_path + "mdp_class.pth")
 
         if d:
             if eps % 50 == 0:
                 print("-====-")
             break
 
-
-        if frame_count % params['checkpoint_every'] == 0 :
-            torch.save(tran_buffer, log_dirs_dict["py_log_dir"] + "/all_transitions.pth")
-            torch.save(mdp, log_dirs_dict["py_log_dir"] + "/mdp.pth")
-
-
     all_rewards.append(running_reward)
 
     #### Evaluation Code
     if frame_count > (params["replay_initial"] + 2 * args.backup_every) and frame_count > params['checkpoint_every']:
-
-        #Calculate parameters
-        rmax_count = sum([1 for s in mdp.tC for a in mdp.tC[s] if sum(mdp.tC[s][a].values()) < 10])
+        cache_mdp = mdp
+        rmax_count = sum([1 for s in cache_mdp.tC for a in cache_mdp.tC[s] if sum(cache_mdp.tC[s][a].values()) < 10])
         #         vi_error, e_vi_error, s_vi_error = ray.get(shared_store_1.get_curr_vi_errors.remote())
         vi_error, e_vi_error, s_vi_error = [mdp.curr_vi_error, mdp.e_curr_vi_error, mdp.s_curr_vi_error]
 
@@ -173,17 +163,15 @@ for eps in range(100000):
         safe_eval_reward = evaluate_on_env(env, safe_policy, eps_count=2, render=False)[0]
         safe_eval_rewards.append(safe_eval_reward)
 
-
-        # Log stuffs in Tensorboard
         loggers_dict["tb_train_logger"].add_scalar('Safe policy performance', float(safe_eval_reward), eps)
         loggers_dict["tb_train_logger"].add_scalar('Optimal policy performance', float(eval_reward), eps)
         loggers_dict["tb_train_logger"].add_scalar('Expl/Expt policy performance', float(running_reward), eps)
 
-        loggers_dict["tb_train_logger"].add_scalar('MDP State Count', float(len(mdp.vD)), eps)
+        loggers_dict["tb_train_logger"].add_scalar('MDP State Count', float(len(cache_mdp.vD)), eps)
         loggers_dict["tb_train_logger"].add_scalar('Rmax Count', float(rmax_count), eps)
-        loggers_dict["tb_train_logger"].add_histogram('Optimal Value Distr', torch.tensor(list(mdp.vD.values())),
+        loggers_dict["tb_train_logger"].add_histogram('Optimal Value Distr', torch.tensor(list(cache_mdp.vD.values())),
                                                       eps)
-        loggers_dict["tb_train_logger"].add_histogram('Optimal Policy Distr', torch.tensor(list(mdp.pD.values())),
+        loggers_dict["tb_train_logger"].add_histogram('Optimal Policy Distr', torch.tensor(list(cache_mdp.pD.values())),
                                                       eps)
 
         loggers_dict["tb_train_logger"].add_scalar('Expl VI_error', float(e_vi_error), eps)
@@ -193,8 +181,6 @@ for eps in range(100000):
         loggers_dict["tb_train_logger"].add_scalar('Explr Epsilon', float(eps_tracker.get_eps(frame_count)), eps)
         loggers_dict["tb_train_logger"].add_scalar('Policy Fetch rate', float(mean(policy_fetch_time)), eps)
 
-
-        # Print on the Console
         print("episode:", eps,
               "reward:", running_reward,
               #               "Bkp error:", [round(d,6) for d in ray.get(shared_store_1.get_curr_vi_errors.remote())],
@@ -210,7 +196,6 @@ for eps in range(100000):
         policy_fetch_time = []
         bellman_backup_time = []
 
-        # Make Video
         if eps % args.video_every == 0 and eps != 0:
             nn_performance, info_, video = rollout_with_nn_behavior(env=env,
                                                                     policy=explr_policy if args.rmax else opt_policy,
@@ -219,9 +204,7 @@ for eps in range(100000):
                                                                     v_dict=mdp.e_vD if args.rmax else mdp.vD,
                                                                     hs_st_disc_fxn=latent_to_hs_disc_fxn,
                                                                     A=env.get_list_of_actions(),
-                                                                    tranDict=mdp.tD,
+                                                                    tranDict=cache_mdp.tD,
                                                                     rewardDict=mdp.e_rD if args.rmax else mdp.rD,
                                                                     eps=2, render=False)
             save_video(video, title="rollout_t_DECODE_NN_" + str(eps), base_path=log_dirs_dict["py_log_dir"])
-
-        #

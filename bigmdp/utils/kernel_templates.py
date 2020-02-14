@@ -46,12 +46,9 @@ __global__ void MatrixMulKernel(float *TPM, float *TIM, float *RM,  float *V,  f
         // Get expected value for all probable next states
         for (int k = 0; k < %(COL_COUNT)s; ++k) {
             int cell_id = (int) tx * state_offset + i * action_offset + k;
-            float Tprob = TPM[cell_id];
-            int Vidx = (int) TIM[cell_id];
-            float NSvalue = V[Vidx];
-            Pvalue +=  Tprob*RM[cell_id] + Tprob * %(GAMMA)s * NSvalue;
+            int ns_idx = (int) TIM[cell_id];
+            Pvalue +=  TPM[cell_id]* (RM[cell_id] + %(GAMMA)s * V[ns_idx]);
         } 
-
 
         // Keep track of Maximum Q(state,action) value
         if(i==0){MaxPvalue = Pvalue;}else{if(MaxPvalue < Pvalue){MaxPvalue = Pvalue;}} 
@@ -62,16 +59,16 @@ __global__ void MatrixMulKernel(float *TPM, float *TIM, float *RM,  float *V,  f
 
         // keep track of the sum for slip probability
         sum_of_all_st_axn_pairs += Pvalue;
-
     }
 
-    newVal = (1-%(SLIP_ACTION_PROB)s) * MaxPvalue + (%(SLIP_ACTION_PROB)s / %(ACTION_COUNT)s ) *sum_of_all_st_axn_pairs;
+    
+    newVal = (1-%(SLIP_ACTION_PROB)s) * MaxPvalue + (%(SLIP_ACTION_PROB)s / %(ACTION_COUNT)s ) * sum_of_all_st_axn_pairs;
 
     // Write the matrix to device memory;
     // each thread writes one element
-    Error[tx] = newVal - V[tx];
     VNEW[tx] = newVal;
-
+    Error[tx] = VNEW[tx] - V[tx];
+    //Error[tx] = (1-%(SLIP_ACTION_PROB)s);
     }
 }
 """
