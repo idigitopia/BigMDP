@@ -8,12 +8,9 @@ HYPERPARAMS = {
         'stop_reward': 500,
         'max_episode_length':500,
         'run_name': 'CartPoleR1',
-        'replay_size': 1e5,
-        'replay_initial': 800,
         'unknown_transition_reward': -1000,
         'vi_policy_sync': 10,
         'target_net_sync': 1000,
-        'total_frames': 1e6,
         'epsilon_frames': 1e3,
         'epsilon_start': 1.0,
         'epsilon_final': 0.1,
@@ -24,20 +21,27 @@ HYPERPARAMS = {
         'rmax_reward': 10000,
         'rmax_thres': 10,
         'rmin':-10,
-        'checkpoint_every': 100000,
+        'checkpoint_every': 10000,
+
+        'total_frames': 1e6, # outer iteration count * internal_step_count*4
+        'outer_iteration_count':100,
+        'bellman_backup_every':25,
+        'n_backups':10,
+        'replay_size': 5e5,
+        'replay_initial': 20000,
+        'internal_step_count_per_policy': 20000,
+        'evaluate_every': 1000,
 
     },
+
     'MountainCar-sym': {
         'env_name': "MountainCar-v0",
         'stop_reward': 90.0,
         'max_episode_length': 200,
         'run_name': 'MountainCarR1',
-        'replay_size': 1e5,
-        'replay_initial': 1000,
         'unknown_transition_reward': -1000,
         'vi_policy_sync': 10,
         'target_net_sync': 1000,
-        'total_frames': 1e6,
         'epsilon_frames': 1e3,
         'epsilon_start': 1.0,
         'epsilon_final': 0.1,
@@ -50,18 +54,55 @@ HYPERPARAMS = {
         'rmin':-10,
         'checkpoint_every': 1000,
 
+        'total_frames': 1e6,  # outer iteration count * internal_step_count*4
+        'outer_iteration_count': 50,
+        'bellman_backup_every': 35,
+        'n_backups': 10,
+        'replay_size': 1e6,
+        'replay_initial': 20000,
+        'internal_step_count_per_policy': 6000,
+        'evaluate_every': 1000,
     },
+
+    'Acrobot-sym': {
+        'env_name': "Acrobot-v1",
+        'stop_reward': 90.0,
+        'max_episode_length': 10000,
+        'run_name': 'AcrobotR1',
+        'unknown_transition_reward': -1000,
+        'vi_policy_sync': 10,
+        'target_net_sync': 1000,
+        'epsilon_frames': 1e3,
+        'epsilon_start': 1.0,
+        'epsilon_final': 0.1,
+        'learning_rate': 1e-4,
+        'gamma': 0.99,
+        'batch_size': 32,
+        'slip_probability': 0.1,
+        'rmax_reward': 10000,
+        'rmax_thres': 10,
+        'rmin': -10,
+        'checkpoint_every': 100000,
+
+        'total_frames': 1e6,  # outer iteration count * internal_step_count*4
+        'outer_iteration_count': 15,
+        'bellman_backup_every': 35,
+        'n_backups': 10,
+        'replay_size': 200000,
+        'replay_initial': 20000,
+        'internal_step_count_per_policy': 100000,
+        'evaluate_every': 10000,
+    },
+
+
     'LunarLander-sym': {
         'env_name': "LunarLander-v2",
         'stop_reward': 500.0,
         'max_episode_length': 1000,
         'run_name': 'LunarLanderR1',
-        'replay_size': 1e5,
-        'replay_initial': 100,
         'unknown_transition_reward': -1000,
         'vi_policy_sync': 100,
         'target_net_sync': 1000,
-        'total_frames': 1e6,
         'epsilon_frames': 1e4,
         'epsilon_start': 1.0,
         'epsilon_final': 0.1,
@@ -74,6 +115,14 @@ HYPERPARAMS = {
         'rmin': -200,
         'checkpoint_every': 1000,
 
+        'total_frames': 1e6,  # outer iteration count * internal_step_count*4
+        'outer_iteration_count': 100,
+        'bellman_backup_every': 35,
+        'n_backups': 10,
+        'replay_size': 1e6,
+        'replay_initial': 20000,
+        'internal_step_count_per_policy': 6000,
+        'evaluate_every': 1000,
     },
     
         'MontezumaRevenge-sym': {
@@ -125,4 +174,37 @@ HYPERPARAMS = {
         'checkpoint_every': 1000,
 
     },
+
+    'Pong-img': {
+        'env_name': "PongDeterministic-v4",
+        'stop_reward': 500,
+        'max_episode_length': 11800,
+        'run_name': 'PongR1',
+        'unknown_transition_reward': -1000,
+        'vi_policy_sync': 100,
+        'target_net_sync': 1000,
+        'epsilon_frames': 1e4,
+        'epsilon_start': 1.0,
+        'epsilon_final': 0.1,
+        'learning_rate': 1e-4,
+        'gamma': 0.99,
+        'batch_size': 32,
+        'slip_probability': 0.1,
+        'rmax_reward': 1000,
+        'rmax_thres': 10,
+        'rmin': -200,
+        'checkpoint_every': 1000,
+
+        'total_frames': 1e6,  # outer iteration count * internal_step_count*4
+        'outer_iteration_count': 100,
+        'bellman_backup_every': 25,
+        'n_backups': 10,
+        'replay_size': 5e5,
+        'replay_initial': 20000,
+        'internal_step_count_per_policy': 20000,
+        'evaluate_every': 1000,
+
+    },
+
+
 }
