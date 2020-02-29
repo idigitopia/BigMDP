@@ -17,10 +17,17 @@ import pycuda
 # -- initialize the device
 from statistics import mean
 from bigmdp.utils.tmp_vi_helper import *
-
+import numpy as np
+from tqdm import tqdm
+import pycuda.autoinit
+from collections import namedtuple
 
 def init2dict():
     return {}
+
+
+def init2list():
+    return []
 
 
 def init2zero():
@@ -36,9 +43,10 @@ def init2zero_def_def_dict():
 
 
 class FullMDP(object):
-    def __init__(self, A, ur=-1000, MAX_S_COUNT=1000000, MAX_NS_COUNT =20 ,
-                 vi_params={"gamma": 0.99,"slip_prob": 0,"rmax_reward": 1000,"rmax_thres": 10,"balanced_explr": False},
-                 policy_params= {"unhash_array_len":2}):
+    def __init__(self, A, ur=-1000, MAX_S_COUNT=1000000, MAX_NS_COUNT=20,
+                 vi_params={"gamma": 0.99, "slip_prob": 0, "rmax_reward": 1000, "rmax_thres": 10,
+                            "balanced_explr": False},
+                 policy_params={"unhash_array_len": 2}, weight_transitions=True, default_mode="GPU"):
         """
         :param A: Action Space of the MDP
         :param ur: reward for undefined state action pair
@@ -48,8 +56,8 @@ class FullMDP(object):
         self.MAX_S_COUNT = MAX_S_COUNT  # Maximum number of state that can be allocated in GPU
         self.MAX_NS_COUNT = MAX_NS_COUNT  # MAX number of next states for a single state action pair
         self.curr_vi_error = float("inf")  # Backup error
-        self.e_curr_vi_error = float("inf")  # Backup error
-        self.s_curr_vi_error = float("inf")  # Backup error
+        self.e_curr_vi_error = float("inf")  # exploration Backup error
+        self.s_curr_vi_error = float("inf")  # safe  Backup error
 
         # MDP Parameters
         self.tC = defaultdict(init2zero_def_def_dict)  # Transition Counts
@@ -58,57 +66,102 @@ class FullMDP(object):
         self.rD = init2zero_def_def_dict()  # init2def_def_dict() # Reward Expected
         self.ur = ur
         self.A = A
+        self.weight_transitions = weight_transitions
+        self.default_mode = default_mode
 
         # MDP GPU Parameters
         self.s2idx = {s: i for i, s in enumerate(self.tD)}
         self.idx2s = {i: s for i, s in enumerate(self.tD)}
+        self.a2idx = {s: i for i, s in enumerate(self.A)}
+        self.idx2a = {i: s for i, s in enumerate(self.A)}
+
+        self.tranCountMatrix_cpu = np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32')
+        self.tranProbMatrix_cpu = np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32')
+        self.tranidxMatrix_cpu = np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32')
+        self.rewardMatrix_cpu = np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32')
+
         self.tranCountMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
         self.tranProbMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
         self.tranidxMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
         self.rewardMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
 
         # Optimal Policy GPU parameters
-        self.vD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, 1)).astype('float32'))
-        self.qD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, len(self.A))).astype('float32'))
+        self.vD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, 1)).astype('float32')) # value vector in gpu
+        self.qD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, len(self.A))).astype('float32')) # q matrix in gpu
+        self.vD_cpu = np.zeros((self.MAX_S_COUNT, 1)).astype('float32')
+        self.qD_cpu = np.zeros((self.MAX_S_COUNT, len(self.A))).astype('float32')
         self.gpu_backup_counter = 0
+
 
         # Exploration Policy GPU parameters
         self.e_vD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, 1)).astype('float32'))
         self.e_qD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, len(self.A))).astype('float32'))
         self.e_rewardMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
+        self.e_vD_cpu = np.zeros((self.MAX_S_COUNT, 1)).astype('float32')
+        self.e_qD_cpu = np.zeros((self.MAX_S_COUNT, len(self.A))).astype('float32')
+        self.e_rewardMatrix_cpu = np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32')
         self.e_gpu_backup_counter = 0
 
         # Safe Policy GPU parameters
         self.s_vD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, 1)).astype('float32'))
         self.s_qD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, len(self.A))).astype('float32'))
+        self.s_vD_cpu = np.zeros((self.MAX_S_COUNT, 1)).astype('float32')
+        self.s_qD_cpu = np.zeros((self.MAX_S_COUNT, len(self.A))).astype('float32')
         self.s_gpu_backup_counter = 0
 
-        # Optimal Policy Parameters
+        # Optimal Policy CPU Parameters
         self.vD = init2zero_def_dict()  # Optimal Value Vector
         self.qD = init2zero_def_def_dict()  # Optimal Q Value Matrix
         self.pD = {}  # Optimal Policy Vector
 
-        # Exploration Policy Parameters
+        # Exploration Policy CPU Parameters
         self.e_vD = init2zero_def_dict()  # Exploration Value Vector
         self.e_qD = init2zero_def_def_dict()  # Exploration Q Value Matrix\
         self.e_pD = {}  # Exploration Policy Vector
         self.e_rD = init2zero_def_def_dict()  # exploration reward to check which state is visited.
 
-        # Safe Policy Parameters
+        # Safe Policy CPU Parameters
         self.s_vD = init2zero_def_dict()  # Exploration Value Vector
         self.s_qD = init2zero_def_def_dict()  # Exploration Q Value Matrix\
         self.s_pD = {}  # Exploration Policy Vector
-
 
         # Policy Search , nn parameters
         self._unhash_dict = {}
         self._total_calls = 0
         self._nn_calls = 0
         self._unhash_idx2s = {}
-        self.nn_searchMatrix_gpu = gpuarray.to_gpu(np.ones((self.MAX_S_COUNT,policy_params["unhash_array_len"])).astype("float32")*9999)
+        self.nn_searchMatrix_gpu = gpuarray.to_gpu(
+            np.ones((self.MAX_S_COUNT, policy_params["unhash_array_len"])).astype("float32") * 9999)
 
         self._initialize_end_and_unknown_state()
 
+    @property
+    def missing_state_action_count(self):
+        return sum([1 for s in self.rD for a in self.rD[s] if self.ur == self.rD[s][a]])
+
+    @property
+    def total_state_action_count(self):
+        return len(self.tD)*len(self.A)
+
+    @property
+    def missing_state_action_percentage(self):
+        return round(self.missing_state_action_count/self.total_state_action_count, 4)
+
+    @property
+    def rmax_state_action_count(self):
+        return sum([1 for s in self.rD for a in self.rD[s] if self.vi_params["rmax_reward"] >= self.rD[s][a]])
+
+    @property
+    def valueDict(self):
+        return {s:self.vD_cpu[i] for s,i in self.s2idx.items()}
+
+    @property
+    def qvalDict(self):
+        return {s: {a:self.qD_cpu[i][j] for a,j in self.a2idx.items()} for s, i in self.s2idx.items()}
+
+    @property
+    def polDict(self):
+        return {s: max(self.qvalDict[s], key = self.qvalDict[s].get) for s in self.qvalDict}
 
     def _initialize_end_and_unknown_state(self):
         """
@@ -120,87 +173,63 @@ class FullMDP(object):
             self.consume_transition(["unknown_state", a, "unknown_state", 0, 0])  # [s, a, ns, r, d]
             self.consume_transition(["end_state", a, "end_state", 0, 1])  # [s, a, ns, r, d]
 
-    def update_state_indexes(self):
-        """
-        updates all indexes for GPU-CPU communication
-        """
-        self.s2idx = {s: i for i, s in enumerate(self.tD)}
-        self.idx2s = {i: s for i, s in enumerate(self.tD)}
-        self.a2idx = {s: i for i, s in enumerate(self.A)}
-        self.idx2a = {i: s for i, s in enumerate(self.A)}
-
-    def update_mdp_at_gpu_for(self, s, a):
-        """
-        updates GPU matrix for particular state action
-        """
-        for i, a in [(self.a2idx[a], a)]:
-            for j, s in [(self.s2idx[s], s)]:
-                self.tranProbMatrix_gpu[i][j] = gpuarray.to_gpu(np.array(  [self.tD[s][a][ns] for ns in self.tD[s][a]] + [0] * (self.MAX_NS_COUNT - len(self.tD[s][a]))).astype("float32"))
-                self.tranidxMatrix_gpu[i][j] = gpuarray.to_gpu(np.array([self.s2idx[ns] for ns in self.tD[s][a]] + [self.s2idx["unknown_state"]] * ( self.MAX_NS_COUNT - len(self.tD[s][a]))).astype("float32"))
-                self.rewardMatrix_gpu[i][j] = gpuarray.to_gpu(  np.array([self.rD[s][a]] * self.MAX_NS_COUNT).astype("float32"))
-
-                self.e_rewardMatrix_gpu[i][j] = gpuarray.to_gpu(np.array([self.get_rmax_reward_logic(s,a)] * self.MAX_NS_COUNT).astype("float32"))
-                assert len(self.tranProbMatrix_gpu[i][j]) == len(self.tranidxMatrix_gpu[i][j])
-
     def update_mdp_for(self, s, a):
         """
         updates transition probabilities as well as reward as per the transition counts for the passed state action pair
         """
 
         self.tD[s][a] = init2zero_def_dict()
-        self.update_state_indexes()
+        #         self.update_state_indexes()
 
         for ns_ in self.tC[s][a]:
-            self.tD[s][a][ns_] = self.tC[s][a][ns_] / sum(self.tC[s][a].values())
+            self.tD[s][a][ns_] = self.tC[s][a][ns_] / sum(self.tC[s][a].values()) if self.weight_transitions else 1 / len(self.tC[s][a])
             self.rD[s][a] = sum(self.rC[s][a].values()) / sum(self.tC[s][a].values())
             # self.rd[s][a][ns_] = self.rc[s][a][ns_] / sum(self.tc[s][a][ns_])  # for state action nextstate
 
-            self.update_mdp_at_gpu_for(s, a)
+            self.update_mdp_matrix_at_cpu_for(s,a)
 
-    def sync_opt_val_vectors_from_GPU(self):
-        for i, v in enumerate(self.vD_gpu):
-            if i not in self.idx2s:
-                break
-            self.vD[self.idx2s[i]] = float(v.get())
+    def update_mdp_at_gpu_for_all(self,):
+        """
+        updates GPU matrix for particular state action
+        """
+        for s in tqdm(self.tD):
+            for a in self.A:
+                self.update_mdp_matrix_at_gpu_for(s, a)
 
-        for i, qs in enumerate(self.qD_gpu):
-            if i not in self.idx2s:
-                break
-            for j, qsa in enumerate(self.qD_gpu[i]):
-                self.qD[self.idx2s[i]][self.idx2a[j]] = float(qsa.get())
+    def sync_mdp_from_cpu_to_gpu(self,):
+        self.tranCountMatrix_gpu = gpuarray.to_gpu(self.tranCountMatrix_cpu)
+        self.tranProbMatrix_gpu = gpuarray.to_gpu(self.tranProbMatrix_cpu)
+        self.tranidxMatrix_gpu = gpuarray.to_gpu(self.tranidxMatrix_cpu)
+        self.rewardMatrix_gpu = gpuarray.to_gpu(self.rewardMatrix_cpu)
+        self.e_rewardMatrix_gpu = gpuarray.to_gpu(self.e_rewardMatrix_cpu)
 
-        for s in self.qD:
-            self.pD[s] = max(self.qD[s], key=self.qD[s].get)
 
-    def sync_explr_val_vectors_from_GPU(self):
-        for i, v in enumerate(self.e_vD_gpu):
-            if i not in self.idx2s:
-                break
-            self.e_vD[self.idx2s[i]] = float(v.get())
 
-        for i, qs in enumerate(self.e_qD_gpu):
-            if i not in self.idx2s:
-                break
-            for j, qsa in enumerate(self.e_qD_gpu[i]):
-                self.e_qD[self.idx2s[i]][self.idx2a[j]] = float(qsa.get())
+    def update_mdp_matrix_at_gpu_for(self, s, a):
+        """
+        updates GPU matrix for particular state action
+        """
+        for i, a in [(self.a2idx[a], a)]:
+            for j, s in [(self.s2idx[s], s)]:
+                self.tranProbMatrix_gpu[i][j] = gpuarray.to_gpu(np.array(
+                    [self.tD[s][a][ns] for ns in self.tD[s][a]] + [0] * (self.MAX_NS_COUNT - len(self.tD[s][a]))).astype("float32"))
+                self.tranidxMatrix_gpu[i][j] = gpuarray.to_gpu(np.array([self.s2idx[ns] for ns in self.tD[s][a]] + [self.s2idx["unknown_state"]] * (self.MAX_NS_COUNT - len(self.tD[s][a]))).astype("float32"))
+                self.rewardMatrix_gpu[i][j] = gpuarray.to_gpu(np.array([self.rD[s][a]] * self.MAX_NS_COUNT).astype("float32"))
+                self.e_rewardMatrix_gpu[i][j] = gpuarray.to_gpu(np.array([self.get_rmax_reward_logic(s, a)] * self.MAX_NS_COUNT).astype("float32"))
+                assert len(self.tranProbMatrix_gpu[i][j]) == len(self.tranidxMatrix_gpu[i][j])
 
-        for s in self.e_qD:
-            self.e_pD[s] = max(self.e_qD[s], key=self.e_qD[s].get)
+    def update_mdp_matrix_at_cpu_for(self, s, a):
+        """
+        updates GPU matrix for particular state action
+        """
+        for i, a in [(self.a2idx[a], a)]:
+            for j, s in [(self.s2idx[s], s)]:
+                self.tranProbMatrix_cpu[i][j] = np.array([self.tD[s][a][ns] for ns in self.tD[s][a]] + [0] * (self.MAX_NS_COUNT - len(self.tD[s][a]))).astype("float32")
+                self.tranidxMatrix_cpu[i][j] = np.array([self.s2idx[ns] for ns in self.tD[s][a]] + [self.s2idx["unknown_state"]] * (self.MAX_NS_COUNT - len(self.tD[s][a]))).astype("float32")
+                self.rewardMatrix_cpu[i][j] = np.array([self.rD[s][a]] * self.MAX_NS_COUNT).astype("float32")
+                self.e_rewardMatrix_cpu[i][j] = np.array([self.get_rmax_reward_logic(s, a)] * self.MAX_NS_COUNT).astype("float32")
+                assert len(self.tranProbMatrix_cpu[i][j]) == len(self.tranidxMatrix_cpu[i][j])
 
-    def sync_safe_val_vectors_from_GPU(self):
-        for i, v in enumerate(self.s_vD_gpu):
-            if i not in self.idx2s:
-                break
-            self.s_vD[self.idx2s[i]] = float(v.get())
-
-        for i, qs in enumerate(self.s_qD_gpu):
-            if i not in self.idx2s:
-                break
-            for j, qsa in enumerate(self.s_qD_gpu[i]):
-                self.s_qD[self.idx2s[i]][self.idx2a[j]] = float(qsa.get())
-
-        for s in self.s_qD:
-            self.s_pD[s] = max(self.s_qD[s], key=self.s_qD[s].get)
 
     def seed_for_new_state(self, s):
         """
@@ -209,6 +238,10 @@ class FullMDP(object):
         """
 
         if s not in self.tC:
+            curr_idx = len(self.tC)
+            self.s2idx[s] = curr_idx
+            self.idx2s[curr_idx] = s
+
             for a_ in self.A:
                 if a_ not in self.tC[s]:
                     self.tC[s][a_]["unknown_state"] = 1
@@ -218,8 +251,15 @@ class FullMDP(object):
             # update unhashdict for policy
             if s not in ["end_state", "unknown_state"]:
                 self._unhash_dict[s] = unhAsh(s)
-                self._unhash_idx2s[len(self._unhash_dict)-1]=s
-                self.nn_searchMatrix_gpu[len(self._unhash_dict)-1] = gpuarray.to_gpu(np.array(unhAsh(s)).astype("float32"))
+                self._unhash_idx2s[len(self._unhash_dict) - 1] = s
+                if self.default_mode == "GPU":
+                    self.nn_searchMatrix_gpu[len(self._unhash_dict) - 1] = gpuarray.to_gpu(
+                        np.array(unhAsh(s)).astype("float32"))
+
+    def reset_searchMatric_gpu(self):
+        self._unhash_dict = {s: unhAsh(s) for s in self.tC if s not in ["end_state", "unknown_state"]}
+        for i, s in enumerate(self._unhash_dict):
+            self.nn_searchMatrix_gpu[i] = gpuarray.to_gpu(np.array(unhAsh(s)).astype("float32"))
 
     def delete_tran_from_counts(self, s, a, ns):
         """
@@ -255,13 +295,52 @@ class FullMDP(object):
         # update the transition probability for all other next states.
         self.update_mdp_for(s, a)
 
+    def get_rmax_reward_logic(self, s, a):
+        sa_count = sum(self.tC[s][a].values())
+        linearly_decreasing_rmax = self.vi_params["rmax_reward"] * (self.vi_params["rmax_thres"] - sa_count)
+        exponentially_decreasing_rmax = 100 * (math.e ** (int(-0.01 * sa_count)))
+        if s in ["end_state", "unknown_state"]:
+            rmax_reward = 0
+        else:
+            if self.vi_params["balanced_explr"]:
+                rmax_reward = linearly_decreasing_rmax if sa_count < self.vi_params["rmax_thres"] \
+                    else exponentially_decreasing_rmax
+            else:
+                rmax_reward = linearly_decreasing_rmax if sa_count < 10 else self.rD[s][a]
+
+        return rmax_reward
+
+    def sync_opt_val_vectors_from_GPU(self):
+        tmp_vD_cpu = self.vD_gpu.get()
+        tmp_qD_cpu = self.qD_gpu.get()
+        self.vD_cpu = tmp_vD_cpu
+        self.qD_cpu = tmp_qD_cpu
+
+    def sync_explr_val_vectors_from_GPU(self):
+        tmp_e_vD_cpu = self.e_vD_gpu.get()
+        tmp_e_qD_cpu = self.e_qD_gpu.get()
+        self.e_vD_cpu = tmp_e_vD_cpu
+        self.e_qD_cpu = tmp_e_qD_cpu
+
+    def sync_safe_val_vectors_from_GPU(self):
+        tmp_s_vD_cpu = self.s_vD_gpu.get()
+        tmp_s_qD_cpu = self.s_qD_gpu.get()
+        self.s_vD_cpu = tmp_s_vD_cpu
+        self.s_qD_cpu = tmp_s_qD_cpu
+
+
+    def convert_matrix_to_dicts(self):
+        assert False
+
+
     def do_optimal_backup(self, mode="CPU", n_backups=1):
         if mode == "CPU":
             for _ in range(n_backups):
                 self.opt_bellman_backup_step_cpu()
         elif mode == "GPU":
+            self.sync_mdp_from_cpu_to_gpu()
             for _ in range(n_backups):
-                self.opt_bellman_backup_step_gpu()
+                    self.opt_bellman_backup_step_gpu()
             self.sync_opt_val_vectors_from_GPU()
         else:
             print("Illegal Mode: Not Specified")
@@ -272,6 +351,7 @@ class FullMDP(object):
             for _ in range(n_backups):
                 self.safe_bellman_backup_step_cpu()
         elif mode == "GPU":
+            self.sync_mdp_from_cpu_to_gpu()
             for _ in range(n_backups):
                 self.safe_bellman_backup_step_gpu()
             self.sync_safe_val_vectors_from_GPU()
@@ -284,6 +364,7 @@ class FullMDP(object):
             for _ in range(n_backups):
                 self.explr_bellman_backup_step_cpu()
         elif mode == "GPU":
+            self.sync_mdp_from_cpu_to_gpu()
             for _ in range(n_backups):
                 self.explr_bellman_backup_step_gpu()
             self.sync_explr_val_vectors_from_GPU()
@@ -306,27 +387,13 @@ class FullMDP(object):
 
         self.curr_vi_error = backup_error
 
-    def get_rmax_reward_logic(self, s, a):
-        sa_count = sum(self.tC[s][a].values())
-        linearly_decreasing_rmax = self.vi_params["rmax_reward"] * (self.vi_params["rmax_thres"] - sa_count)
-        exponentially_decreasing_rmax = 100 * (math.e ** (int(-0.01 * sa_count)))
-        if s in ["end_state", "unknown_state"]:
-            rmax_reward = 0
-        else:
-            if self.vi_params["balanced_explr"]:
-                rmax_reward = linearly_decreasing_rmax if sa_count < self.vi_params["rmax_thres"] \
-                                else exponentially_decreasing_rmax
-            else:
-                rmax_reward = linearly_decreasing_rmax if sa_count < 10 else self.rD[s][a]
-
-        return rmax_reward
-
     def explr_bellman_backup_step_cpu(self):
         backup_error = 0
         for s in self.tD:
             for a in self.A:
-                self.e_rD[s][a] = self.get_rmax_reward_logic(s,a)
-                self.e_qD[s][a] = self.e_rD[s][a] + self.vi_params["gamma"] * sum(self.tD[s][a][ns] * self.e_vD[ns] for ns in self.tD[s][a])
+                self.e_rD[s][a] = self.get_rmax_reward_logic(s, a)
+                self.e_qD[s][a] = self.e_rD[s][a] + self.vi_params["gamma"] * sum(
+                    self.tD[s][a][ns] * self.e_vD[ns] for ns in self.tD[s][a])
 
             new_val = max(self.e_qD[s].values())
 
@@ -342,35 +409,19 @@ class FullMDP(object):
             for a in self.A:
                 expected_ns_val = sum(self.tD[s][a][ns] * self.s_vD[ns] for ns in self.tD[s][a])
                 self.s_qD[s][a] = self.rD[s][a] + self.vi_params["gamma"] * expected_ns_val
-
                 if "unknown_state" not in self.tD[s][a]:
                     next_explored_state_val_list.append(self.s_qD[s][a])
-
-            new_val = (1 - self.vi_params["slip_prob"]) * max(self.s_qD[s].values()) + \
-                      self.vi_params["slip_prob"] * (mean(next_explored_state_val_list) if next_explored_state_val_list else mean(self.s_qD[s].values()))
+            if next_explored_state_val_list:
+                new_val = (1 - self.vi_params["slip_prob"]) * max(self.s_qD[s].values()) + self.vi_params["slip_prob"] *  sum(next_explored_state_val_list)/len(next_explored_state_val_list)
+            else:
+                new_val = max(self.s_qD[s].values())
 
             backup_error = max(backup_error, abs(new_val - self.s_vD[s]))
             self.s_vD[s] = new_val
             self.s_pD[s] = max(self.s_qD[s], key=self.s_qD[s].get)
         self.s_curr_vi_error = backup_error
 
-    # def update_mdp_at_gpu_for_all(self):
-    #     for i, a in enumerate(self.A):
-    #         for j, s in enumerate(self.tD):
-    #             self.tranProbMatrix_gpu[i][j] = gpuarray.to_gpu(np.array( [self.tD[s][a][ns] for ns in self.tD[s][a]] + [0] * (self.max_ns_count - len(self.tD[s][a]))).astype("float32"))
-    #             self.tranidxMatrix_gpu[i][j] = gpuarray.to_gpu(np.array([self.s2idx[ns] for ns in self.tD[s][a]] + [self.s2idx["unknown_state"]] * (self.max_ns_count - len(self.tD[s][a]))).astype("float32"))
-    #             self.rewardMatrix_gpu[i][j] = gpuarray.to_gpu(np.array([self.rD[s][a]] * self.max_ns_count).astype("float32"))
-    #             assert len(self.tranProbMatrix_gpu[i][j]) == len(self.tranidxMatrix_gpu[i][j])
-    #
-    # def update_mdp_at_gpu_for(self,s,a):
-    #     for i, a in [(self.a2idx[a],a)]:
-    #         for j, s in [(self.s2idx[s],s)]:
-    #             self.tranProbMatrix_gpu[i][j] = gpuarray.to_gpu(np.array( [self.tD[s][a][ns] for ns in self.tD[s][a]] + [0] * (self.max_ns_count - len(self.tD[s][a]))).astype("float32"))
-    #             self.tranidxMatrix_gpu[i][j] = gpuarray.to_gpu(np.array([self.s2idx[ns] for ns in self.tD[s][a]] + [self.s2idx["unknown_state"]] * (self.max_ns_count - len(self.tD[s][a]))).astype("float32"))
-    #             self.rewardMatrix_gpu[i][j] = gpuarray.to_gpu(np.array([self.rD[s][a]] * self.max_ns_count).astype("float32"))
-    #             assert len(self.tranProbMatrix_gpu[i][j]) == len(self.tranidxMatrix_gpu[i][j])
-
-    def opt_bellman_backup_step_gpu(self):
+    def opt_bellman_backup_step_gpu(self) -> object:
         # Temporary variables
         ACTION_COUNT, ROW_COUNT, COL_COUNT = self.tranProbMatrix_gpu.shape
         MATRIX_SIZE = mth.ceil(mth.sqrt(ROW_COUNT))
@@ -426,7 +477,7 @@ class FullMDP(object):
         self.gpu_backup_counter += 1
         if (self.gpu_backup_counter + 1) % 25 == 0:
             # print("checkingggg for epsilng stop")
-            max_error_gpu = gpuarray.max(tgt_error_gpu,stream=None)  # ((value_vector_gpu,new_value_vector_gpu)
+            max_error_gpu = gpuarray.max(tgt_error_gpu, stream=None)  # ((value_vector_gpu,new_value_vector_gpu)
             max_error = max_error_gpu.get()
             max_error_gpu.gpudata.free()
             self.curr_vi_error = float(max_error)
@@ -487,7 +538,7 @@ class FullMDP(object):
 
         self.s_gpu_backup_counter += 1
         if (self.s_gpu_backup_counter + 1) % 25 == 0:
-            max_error_gpu = gpuarray.max(tgt_error_gpu,stream=None)  # ((value_vector_gpu,new_value_vector_gpu)
+            max_error_gpu = gpuarray.max(tgt_error_gpu, stream=None)  # ((value_vector_gpu,new_value_vector_gpu)
             max_error = max_error_gpu.get()
             max_error_gpu.gpudata.free()
             self.s_curr_vi_error = float(max_error)
@@ -547,35 +598,35 @@ class FullMDP(object):
         self.e_qD_gpu = tgt_qD_gpu
 
         self.e_gpu_backup_counter += 1
-        if (self.e_gpu_backup_counter+1) % 25 == 0:
+        if (self.e_gpu_backup_counter + 1) % 25 == 0:
             max_error_gpu = gpuarray.max(tgt_error_gpu, stream=None)  # ((value_vector_gpu,new_value_vector_gpu)
             max_error = float(max_error_gpu.get())
             max_error_gpu.gpudata.free()
             self.e_curr_vi_error = max_error
         tgt_error_gpu.gpudata.free()
 
-    #### Policy Functions
+    #### Policy Functions ####
 
     def get_opt_action(self, hs, mode="GPU"):
-        nn_hs = self._get_nn_hs_gpu(hs) if mode =="GPU" else self._get_nn_hs(hs)
-        return self.pD[nn_hs]
+        nn_hs = self._get_nn_hs_gpu(hs) if mode == "GPU" else self._get_nn_hs(hs)
+        return self.idx2a[np.argmax(self.qD_cpu[self.s2idx[nn_hs]])]
 
     def get_safe_action(self, hs, mode="GPU"):
-        nn_hs = self._get_nn_hs_gpu(hs) if mode =="GPU" else self._get_nn_hs(hs)
-        return self.s_pD[nn_hs]
+        nn_hs = self._get_nn_hs_gpu(hs) if mode == "GPU" else self._get_nn_hs(hs)
+        return self.idx2a[np.argmax(self.s_qD_cpu[self.s2idx[nn_hs]])]
 
-    def get_explr_action(self, hs,mode="GPU"):
-        nn_hs = self._get_nn_hs_gpu(hs) if mode =="GPU" else self._get_nn_hs(hs)
-        return self.e_pD[nn_hs]
+    def get_explr_action(self, hs, mode="GPU"):
+        nn_hs = self._get_nn_hs_gpu(hs) if mode == "GPU" else self._get_nn_hs(hs)
+        return self.idx2a[np.argmax(self.e_qD_cpu[self.s2idx[nn_hs]])]
 
     def _get_nn_hs(self, hs):
         self._total_calls += 1
-        if hs in self.pD:
+        if hs in self.s2idx:
             nearest_neighbor_hs = hs
         else:
             self._nn_calls += 1
             s = unhAsh(hs)
-            hm_dist_dict = {s_hat: hm_dist(s, self._unhash_dict[s_hat]) for s_hat in self.pD if
+            hm_dist_dict = {s_hat: hm_dist(s, self._unhash_dict[s_hat]) for s_hat in self.s2idx if
                             s_hat not in ["end_state", "unknown_state"]}
             nearest_neighbor_hs = min(hm_dist_dict.keys(),
                                       key=(lambda k: hm_dist_dict[k])) if hm_dist_dict else "end_state"
@@ -586,19 +637,22 @@ class FullMDP(object):
 
     def _get_nn_hs_gpu(self, hs):
         self._total_calls += 1
-        if hs in self.pD:
+        if hs in self.s2idx:
             nearest_neighbor_hs = hs
         else:
             self._nn_calls += 1
             distance_vector = self.calc_dist_vect_gpu(self.nn_searchMatrix_gpu, np.array(unhAsh(hs)))
-            nearest_neighbor_hs = self._unhash_idx2s[np.argmin(distance_vector)]
+            # nearest_neighbor_hs = self._unhash_idx2s[np.argmin(distance_vector)]
+            hm_dist_dict = {s_hat: distance_vector[self.s2idx[s_hat]-2] for s_hat in self.s2idx if s_hat not in ["end_state", "unknown_state"]}
+            nearest_neighbor_hs = min(hm_dist_dict.keys(), key=(lambda k: hm_dist_dict[k])) if hm_dist_dict else "end_state"
+
         return nearest_neighbor_hs
 
     def calc_dist_vect_gpu(self, searchMatrix, queryVector):
         # Define kernel code template
         import pycuda.autoinit
         POP_COUNT, VEC_SIZE = searchMatrix.shape
-        InVector = gpuarray.to_gpu(queryVector)
+        InVector = gpuarray.to_gpu(np.array(queryVector, dtype= numpy.float32))
         OutVector = gpuarray.to_gpu(np.zeros((POP_COUNT,), dtype=numpy.float32))
         SearcVector = gpuarray.to_gpu(searchMatrix)
 
@@ -635,3 +689,14 @@ class FullMDP(object):
         OutVector.gpudata.free()
         # return out vector
         return OutVector_cpu
+
+
+    def solve(self, eps = 1e-5, mode = None):
+        mode = mode or self.default_mode
+
+        st = time.time()
+        while self.curr_vi_error > eps:
+            self.do_optimal_backup(mode=mode, n_backups=50)
+            self.do_explr_backup(mode = mode, n_backups=50)
+        et = time.time()
+        print("Time takedn to solve",et-st)

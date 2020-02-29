@@ -75,61 +75,6 @@ __global__ void MatrixMulKernel(float *TPM, float *TIM, float *RM,  float *V,  f
 
 
 
-simple_vi_kernel_code_template = """
-__global__ void MatrixMulKernel(float *TPM, float *TIM, float *RM,  float *V,  float *VNEW, float *Error)
-{
-    // 2D Thread ID (assuming that only *one* block will be executed)
-
-    int tx = %(MATRIX_SIZE)s * (blockDim.y*blockIdx.y + threadIdx.y) +  blockDim.x*blockIdx.x + threadIdx.x;
-    if(%(ROW_COUNT)s > tx){
-
-    // Pvalue is used to store the element of the matrix
-    // that is computed by the thread 
-    float MaxPvalue = 0;
-
-    // Each thread loads one row of M and one column of N,
-    //   to produce one element of P. i for action
-    // Aidx = action index, Sidx = state index, NSidx = next state index
-    int next_state_count = 0;
-    float slip_prob = %(SLIP_ACTION_PROB)s;
-    float newVal = 0;
-    float sum_of_ns_Val = 0;
-
-
-    for (int i = 0; i < %(ACTION_COUNT)s; ++i) {
-      float Pvalue = 0;
-      float rewardSum = 0; 
-      for (int k = 0; k < %(COL_COUNT)s; ++k) {
-          int Aidx = (int) i*%(COL_COUNT)s* %(ROW_COUNT)s ;
-          int Sidx = (int) tx * %(COL_COUNT)s ;
-          int NSidx = (int) k;
-          float Tprob = TPM[Aidx + Sidx + NSidx];
-          int Vidx = (int) TIM[Aidx + Sidx + NSidx];
-          float NSvalue = V[Vidx];
-          Pvalue +=  Tprob*RM[Aidx + Sidx + NSidx] + Tprob * %(GAMMA)s * NSvalue;
-          rewardSum +=  Tprob*RM[Aidx + Sidx + NSidx];
-          if(Tprob>0){
-          next_state_count+=1;
-          }
-      }
-        sum_of_ns_Val+=Pvalue;
-
-        if(i==0){
-        MaxPvalue = Pvalue;
-        }else{
-        if(MaxPvalue < Pvalue){
-        MaxPvalue = Pvalue;
-        }} 
-    }
-    newVal = (1-%(SLIP_ACTION_PROB)s) * MaxPvalue + (%(SLIP_ACTION_PROB)s / %(ACTION_COUNT)s ) * sum_of_ns_Val;
-    
-    // Write the matrix to device memory;
-    // each thread writes one element
-    Error[tx] = newVal - V[tx];
-    VNEW[tx] = newVal;
-    }
-}
-"""
 
 
 

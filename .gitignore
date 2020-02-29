@@ -1,2 +1,5 @@
 .idea/*
-bigmdp/logs/*
+examples/logs/*
+examples/results/*
+examples/result_dump/*
+bigmdp.egg-info

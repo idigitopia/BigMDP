@@ -5,8 +5,9 @@ import time
 from statistics import mean, median
 import math
 from PIL import ImageFont, Image, ImageDraw
-import tqdm
 from statistics import mean , median
+from tqdm import tqdm
+
 
 class EpsilonTracker:
     def __init__(self, params):
@@ -16,6 +17,12 @@ class EpsilonTracker:
 
     def get_eps(self, frame):
         return max(self.epsilon_final, self.epsilon_start - frame / self.epsilon_frames)
+
+def get_eps_policy(greedy_policy, random_policy, epsilon=0.1):
+    """
+    returns a exploration exploitation policy based on epsilon , greedy and random policy
+    """
+    return lambda s: random_policy(s) if (np.random.rand() < epsilon) else greedy_policy(s)
 
 def hAsh(state):
     return repr([int(round(i)) for i in state])
@@ -331,3 +338,40 @@ def evaluate_on_env_with_nn_count(env, policy_func, pi_dict,img_to_disc_fxn,  A,
             "run_info": run_info}
 
     return info["avg_reward"], info
+
+
+
+
+def populate_model_from_buffer(mdp, tran_buffer, latent2discfxn):
+    # all_transitions = tran_buffer.buffer
+    _batch_size = 256
+    _s, _a, _ns, _r, _d = [np.array(s) for s in zip(*tran_buffer.buffer)]
+
+    start_end_indexes = get_iter_indexes(len(_s), _batch_size)
+    for start_i, end_i in tqdm(start_end_indexes):
+        batch, info = tran_buffer.sample_indices(list(range(start_i, end_i)))
+        batch_s, batch_a, batch_ns, batch_r, batch_d = batch
+
+        batch_hs = latent2discfxn(batch_s)
+        batch_hns = latent2discfxn(batch_ns)
+        for i in range(len(batch_hs)):
+            mdp.consume_transition((hAsh(batch_hs[i]),
+                                    int(batch_a[i][0]),
+                                    hAsh(batch_hns[i]),
+                                    float(batch_r[i][0]),
+                                    int(batch_d[i][0])))
+    return mdp
+
+
+def get_iter_indexes(last_index, batch_size):
+    if last_index % batch_size == 0:
+        start_batch_list = list(
+            zip(list(range(0, last_index, batch_size)), [batch_size] * int(last_index / batch_size)))
+    else:
+        start_batch_list = list(
+            zip(list(range(0, last_index - batch_size, batch_size)) + [last_index - last_index % batch_size],
+                [batch_size] * int(last_index / batch_size) + [last_index % batch_size]))
+
+    start_end_list = [(i, i + b) for i, b in start_batch_list]
+
+    return start_end_list
