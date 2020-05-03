@@ -7,9 +7,19 @@ from bigmdp.data.dataset import SimpleReplayBuffer
 from matplotlib import pyplot as plt
 import numpy as np
 import logging
-
+import math
 logger = logging.getLogger("mylogger")
+import gym
+from copy import deepcopy as cpy
 
+def get_shaped_reward(env_name, s, ns):
+    if env_name == "MountainCar-v0":
+        r = 100 * ((math.sin(3 * abs(ns[0]) ) * 0.0025 + 0.5 * abs(ns[1]) * abs(ns[1]))
+                   -(math.sin(3 * abs(s[0]) ) * 0.0025 + 0.5 * abs(s[1]) * abs(s[1]) ))
+        return r
+    else:
+        print("Shaped Reward nto implemented ")
+        assert False
 
 class SimpleGymEnv:
     """
@@ -17,40 +27,51 @@ class SimpleGymEnv:
     Main Difference is that it returns a tuple of continious and discrete state rather than a single state.
     """
 
-    def __init__(self, env_name: str, max_episode_length: int, action_repeat: int = 1,  seed = None, start_state=None, quantization_level = 1):
+    def __init__(self, env_name: str, max_episode_length: int, env = None, action_repeat_mask = None,  seed = None, start_state=None, quantization_level = 1, shaped_reward = False):
         self.env_name = env_name
-        self._env = gym.make(env_name)
+        if env is not None:
+            print("Using provided environment")
+            self._env = env
+        else:
+            print("Compiling gym environment based on environment name ")
+            self._env =  gym.make(env_name)
         self.seed = seed
         if self.seed is not None:
             self._env.seed(seed)
         self.max_episode_length = min(self._env._max_episode_steps, max_episode_length)
-        self.action_repeat = action_repeat
+        self.action_repeat_mask = action_repeat_mask or {a:1 for a in  self.get_list_of_actions()}
+
         self.step_count = 0
         self.start_obs = start_state
         self.performance_as_steps = None
         self.quantization_level = quantization_level
-
+        self.shaped_reward = shaped_reward
         if (self._env._max_episode_steps < max_episode_length):
             logger.warn("Max episode length of {} over-rided by internal max_episode_steps of {}".format(max_episode_length,
                                                                                                          self._env._max_episode_steps))
 
 
     def set_state(self, s_c):
-        self._env.env.state = s_c
+        if hasattr(self._env, "env"):
+            self._env.env.state = s_c
+        else:
+            self._env.state = s_c
 
     def reset(self) -> tuple:
         if self.seed is not None:
             self._env.seed(self.seed)
         self.step_count = 0  # Reset internal timer
         obs_c = self._env.reset()
+        self.state = obs_c
 
         return obs_c
 
     def step(self, action):
         reward_k = 0
-        for k in range(self.action_repeat):
+        for k in range(self.action_repeat_mask[action]):
             self.step_count += 1
             next_obs, reward, done, info = self._env.step(action)
+            reward = get_shaped_reward(self.env_name, self.state, next_obs) if self.shaped_reward else reward
             reward_k += reward
             done = done or self.step_count == self.max_episode_length
             if done:
@@ -60,6 +81,7 @@ class SimpleGymEnv:
 
 
         obs_c = next_obs
+        self.state = obs_c
 
         return obs_c, reward_k, done, info
 
@@ -101,22 +123,23 @@ class SimpleNormalizeEnv:
         Main Difference is that it returns a tuple of continious and discrete state rather than a single state.
         """
 
-    def __init__(self, env_name: str, max_episode_length: int, action_repeat: int = 1, seed=None, start_state=None,
-                 quantization_level=1, multiply_state=False):
-        import gym
+    def __init__(self, env_name: str, max_episode_length: int, action_repeat_mask = None, seed=None, start_state=None,
+                 quantization_level=1, multiply_state=False, shaped_reward = False):
         self.env_name = env_name
         self._env = gym.make(env_name)
         self.seed = seed
         if self.seed is not None:
             self._env.seed(self.seed)
         self.max_episode_length = min(self._env._max_episode_steps, max_episode_length)
-        self.action_repeat = action_repeat
+        self.action_repeat_mask = action_repeat_mask or {a:1 for a in  self.get_list_of_actions()}
         self.step_count = 0
         self.start_obs = start_state
         self.performance_as_steps = None
         self.quantization_level = quantization_level
         self.normalizing_params = None
         self.reward_params = None
+        self.shaped_reward = shaped_reward
+
         self.set_normalizing_params()
 
         if (self._env._max_episode_steps < max_episode_length):
@@ -132,13 +155,16 @@ class SimpleNormalizeEnv:
 
     def reset(self) -> tuple:
         self.step_count = 0  # Reset internal timer
-        return self._env.reset()
+        self.internal_state = self._env.reset()
+        self.state = self.state_normalizing_func(self.internal_state)
+        return self.state
 
     def step(self, action):
         reward_k = 0
-        for k in range(self.action_repeat):
+        for k in range(self.action_repeat_mask[action]):
             self.step_count += 1
             next_obs, reward, done, info = self._env.step(action)
+            reward = get_shaped_reward(self.env_name, self.internal_state, next_obs) if self.shaped_reward else reward
             reward_k += reward
             done = done or self.step_count == self.max_episode_length
             if done:
@@ -147,7 +173,8 @@ class SimpleNormalizeEnv:
         info["max_episode_length_exceeded"] = bool(self.step_count >= self.max_episode_length)
 
         obs_c = self.state_normalizing_func(next_obs)
-
+        self.state = obs_c
+        self.internal_state = next_obs
         return obs_c, reward_k, done, info
 
     def render(self, mode='rgb_array'):
@@ -172,7 +199,7 @@ class SimpleNormalizeEnv:
         return [i for i in range(self._env.action_space.n)]
 
     def state_normalizing_func(self, state):
-        normalized_state = state
+        normalized_state = cpy(state)
         for i in range(len(state)):
             max, min = self.normalizing_params[i]["max"], self.normalizing_params[i]["min"]
             normalized_state[i] = 2 * ((state[i] - min) / (max - min)) - 1
@@ -378,3 +405,67 @@ def collect_memory(env, memory, policy_func, episodes, verbose=False):
 
 
 
+
+
+
+
+
+
+
+
+
+class SimpleAtariEnv:
+    """
+    Wrapper around Gym Environment
+    Main Difference is that it returns a tuple of continious and discrete state rather than a single state.
+    """
+
+    def __init__(self, env, action_repeat: int = 1, action_repeat_mask = None,  max_episode_length= 999999):
+        # action repead mask example {1:1, 0:4} {action:Action_repeat}
+        self._env = env
+        self.step_count = 0
+        self.performance_as_steps = None
+        self.action_repeat_mask = action_repeat_mask or {a:1 for a in  self.get_list_of_actions()}
+
+    def reset(self) -> tuple:
+        obs_c = self._env.reset()
+        return np.array(obs_c)
+
+    def step(self, action):
+        reward_k = 0
+        for k in range(self.action_repeat_mask[action]):
+            self.step_count += 1
+            next_obs, reward, done, info = self._env.step(action)
+            reward_k += reward
+            done = done
+            if done:
+                break
+
+        info = {}
+        info["max_episode_length_exceeded"] =False
+
+        obs_c = next_obs
+
+        return np.array(obs_c), reward_k, done, info
+
+
+    def render(self, mode = 'rgb_array'):
+        return self._env.render(mode = mode)
+
+    def close(self):
+        self._env.close()
+
+    @property
+    def observation_size(self):
+        return self._env.reset().shape[0]
+
+    @property
+    def action_size(self):
+        return 1 #self._env.action_space.shape[0] # todo fix this hardcoded for cartpole
+
+    # Sample an action randomly from a uniform distribution over all valid actions
+    def sample_random_action(self):
+        return self._env.action_space.sample()
+
+    def get_list_of_actions(self):
+        return [i for i in range(self._env.action_space.n)]

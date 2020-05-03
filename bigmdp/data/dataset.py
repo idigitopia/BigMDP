@@ -41,9 +41,9 @@ class BufferIterator:
         if self._sample_index < self._batch_count:
             return ret_samples, info
         else:
-            print("DEBUG MESSAGE: Iterator Stopped at Count:{}".format(self._sample_index))
-            print("DEBUG MESSAGE: Average Sample Time:{}".format(sum(self.sample_times)/len(self.sample_times)))
-            print("DEBUG MESSAGE: test sample time:{}".format(timeit(lambda: self._buffer.sample(32), number=250) / 250))
+            # print("DEBUG MESSAGE: Iterator Stopped at Count:{}".format(self._sample_index))
+            # print("DEBUG MESSAGE: Average Sample Time:{}".format(sum(self.sample_times)/len(self.sample_times)))
+            # print("DEBUG MESSAGE: test sample time:{}".format(timeit(lambda: self._buffer.sample(32), number=250) / 250))
 
             raise StopIteration()
 
@@ -71,7 +71,7 @@ class SimpleReplayBuffer:
         return self.sample_indices(idxs)
 
     def sample_indices(self, idxs):
-        samples = np.array([self.buffer[i] for i in idxs])
+        samples = [self.buffer[i] for i in idxs]
         padded_infos = [self.padded_info_buffer[i] for i in idxs]
         info = {"sample_indices": idxs}
         info.update({k:[pi[k] for pi in padded_infos] for k in padded_infos[0].keys()})
@@ -97,11 +97,16 @@ class SimpleReplayBuffer:
     def reset_priorities(self):
         return
 
-    def reset_padded_info_buffer(self):
+    def reset_buffer(self):
+        self.buffer = deque(maxlen=self.buffer_limit)
+        self.priorities = deque(maxlen=self.buffer_limit)  # Not used, just for consistency
+        self.padded_info_buffer = deque(maxlen=self.buffer_limit)
+
+    def reset_padded_info_buffer(self, padded_info = None):
         print("resetting padded_info_buffer")
         self.padded_info_buffer =  deque(maxlen=self.buffer_limit)
         for i in range(len(self.buffer)):
-            self.padded_info_buffer.append({"qval":0})
+            self.padded_info_buffer.append(padded_info or {})
 
     def __iter__(self):
         ''' Returns the iterator object '''
@@ -160,7 +165,7 @@ class PrioritizedReplayBuffer:
         return self.sample_indices(idxs)
 
     def sample_indices(self, idxs):
-        samples = np.array([self.buffer[i] for i in idxs])
+        samples = [self.buffer[i] for i in idxs]
         padded_infos = [self.padded_info_buffer[i] for i in idxs]
         info = {"sample_indices": idxs}
         info.update({k: [pi[k] for pi in padded_infos] for k in padded_infos[0].keys()})
@@ -194,7 +199,12 @@ class PrioritizedReplayBuffer:
         print("resetting padded_info_buffer")
         self.padded_info_buffer =  deque(maxlen=self.buffer_limit)
         for i in range(len(self.buffer)):
-            self.padded_info_buffer.append({"qval":0})
+            self.padded_info_buffer.append({"qval":[0]})
+
+    def reset_buffer(self):
+        self.buffer = deque(maxlen=self.buffer_limit)
+        self.priorities = deque(maxlen=self.buffer_limit)  # Not used, just for consistency
+        self.padded_info_buffer = deque(maxlen=self.buffer_limit)
 
     def set_custom_priorities(self, calc_prty_func, indices = None):
         """
@@ -235,7 +245,7 @@ def gather_dataset_in_buffer_v2(exp_buffer, env, episodes, render, policies, pol
     return _exp_buffer
 
 
-def gather_data_in_buffer(exp_buffer, env, episodes, render, policy, frame_count = None, pad_attribute_fxn = None):
+def gather_data_in_buffer(exp_buffer, env, episodes, render, policy, frame_count = None, pad_attribute_fxn = None, verbose = False):
 
     # experience = obs, action, next_obs, reward, terminal_flag
     experiences = []
@@ -273,17 +283,10 @@ def gather_data_in_buffer(exp_buffer, env, episodes, render, policy, frame_count
 
             ep_reward += reward
 
-            def populate_mdp_with_model(mdp, step_fxn, net, iterations=1):
-                for i in range(iterations):
-                    for hs in list(mdp.tD.keys()):
-                        if hs in OMIT_LIST:
-                            continue
-                        for a in mdp.A:
-                            hns, r, d, i = step_fxn(hs, a, net)
-                            mdp.consume_transition((hs, a, hns, r, d))
-                return mdp
             obs_c = next_obs_c
         rewards += ep_reward
+        if verbose:
+            print(ep_reward, frame_count)
 
         if  frame_count and frame_counter >  frame_count:
             break
@@ -299,5 +302,58 @@ def reset_and_return_copy(buffer):
     _buffer = cpy(buffer)
     _buffer.reset_priorities()
     return _buffer
+
+
+
+def split_test_train_episodes(data_buffer, test_size=0.1):
+    all_episodes = split_dataset_to_episodes(data_buffer)
+    test_episode_idxs = np.random.choice(len(all_episodes), int(len(all_episodes) * test_size), replace=False)
+    train_episodes_idxs = [i for i in range(len(all_episodes)) if i not in test_episode_idxs]
+    train_episodes, test_episodes = [all_episodes[i] for i in train_episodes_idxs], \
+                                    [all_episodes[i] for i in test_episode_idxs]
+
+    print("Total Episodes: {}  Train Episodes: {}  Test Episodes: {}".format(len(all_episodes), len(train_episodes),
+                                                                             len(test_episodes)))
+    return train_episodes, test_episodes
+
+
+def split_dataset_to_episodes(data_buffer):
+    episodes = []
+    episode = []
+    prev_ns = None
+    prev_d = False
+    for transition in data_buffer.buffer:
+        s, a, ns, r, d = transition
+
+        if not prev_d and prev_ns is not None and prev_ns != s:
+            episodes.append(episode)
+            episode = []
+
+        episode.append(transition)
+
+        if d[0]:
+            episodes.append(episode)
+            episode = []
+
+        prev_ns = ns
+        prev_d = d[0]
+
+    return episodes
+
+
+def split_test_train_data_buffer(data_buffer, test_size=0.1):
+    data_buffer = cpy(data_buffer)
+    train_episodes, test_episodes = split_test_train_episodes(data_buffer, test_size=test_size)
+    data_buffer.reset_buffer()
+    train_buffer, test_buffer = cpy(data_buffer), cpy(data_buffer)
+    train_buffer.buffer.extend([t for e in train_episodes for t in e])
+    test_buffer.buffer.extend([t for e in test_episodes for t in e])
+
+    train_buffer.reset_priorities()
+    train_buffer.reset_padded_info_buffer()
+    test_buffer.reset_priorities()
+    test_buffer.reset_padded_info_buffer()
+
+    return train_buffer, test_buffer
 
 

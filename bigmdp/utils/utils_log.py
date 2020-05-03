@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 from bigmdp.utils import utils_directory as dh
 
 
-def get_simple_log_dir_and_logger(env_name = "test_env", exp_prefix = "this_exp", EXP_PARAMS = "None", load_time_string = "None"  ):
+def get_simple_log_dir_and_logger(env_name = "test_env", exp_prefix = "this_exp", EXP_PARAMS = "None", load_time_string = "None" , file_logger = False ):
     ENVNAME = env_name
     # args.video = False
     # Experiment housekeeping
@@ -36,15 +36,16 @@ def get_simple_log_dir_and_logger(env_name = "test_env", exp_prefix = "this_exp"
 
     formatter = logging.Formatter('%(asctime)s:%(name)s:%(message)s')
 
-    py_file_handler = logging.FileHandler(log_dirs["py_log_dir"] + '/all_logs.log')
-    py_file_handler.setLevel(logging.DEBUG)
-    py_file_handler.setFormatter(formatter)
+    if file_logger:
+        py_file_handler = logging.FileHandler(log_dirs["py_log_dir"] + '/all_logs.log')
+        py_file_handler.setLevel(logging.DEBUG)
+        py_file_handler.setFormatter(formatter)
+        py_logger.addHandler(py_file_handler)
 
     py_stream_handler = logging.StreamHandler()
     py_stream_handler.setFormatter(formatter)
     py_stream_handler.setLevel(logging.DEBUG)
 
-    py_logger.addHandler(py_file_handler)
     py_logger.addHandler(py_stream_handler)
 
     # Tensorflow Logging Basics

@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from bigmdp.utils.tmp_vi_helper import *
+import math
 
 
 def write_video(frames, title, path=''):
@@ -25,25 +26,17 @@ def pad_all_frames(all_r_frames):
     max_len = max([a.shape[0] for a in all_r_frames])
     padded_frames = [np.zeros((max_len, all_r_frames[0].shape[1], all_r_frames[0].shape[2], all_r_frames[0].shape[3]),
                               dtype=np.uint8) for _ in range(len(all_r_frames))]
-    # padded_frames.shapea
 
     for i in range(len(padded_frames)):
         f = all_r_frames[i]
-        #         print(f.shape)
-        #         input()
-        #         import pdb;pdb.set_trace()
         padded_frames[i][:f.shape[0], :, :, :] = f
         if (max_len > f.shape[0]):
-            #             import pdb; pdb.set_trace()
             padded_frames[i][f.shape[0]:, :, :, :] = np.array([f[-1, :, :, :] for _ in range(max_len - f.shape[0])])
-        padded_frames
 
     p = np.array(padded_frames, dtype=np.uint8)
-    p.shape
     return p
 
-import math
-def save_video(all_rollout_frames, base_path="./", title="default_name"):
+def stack_and_write_video(all_rollout_frames, base_path="./", title="default_name"):
     all_rollout_frames_ = [np.array(f) for f in all_rollout_frames]
     p = pad_all_frames(all_rollout_frames_)
     videos = torch.tensor(p).permute(0, 1, 4, 3, 2)
@@ -54,4 +47,5 @@ def save_video(all_rollout_frames, base_path="./", title="default_name"):
         new_video.append(make_grid(videos[:, i, :, :, :], nrow=row_n).permute(2, 1, 0))
     new_video_ = np.array([t.numpy() for t in new_video])
     write_video(new_video_, title, path=base_path)
+    return new_video_
 

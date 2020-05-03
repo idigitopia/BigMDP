@@ -25,6 +25,11 @@ from copy import deepcopy as cpy
 from collections import Counter
 import random
 from bigmdp.utils.tmp_vi_helper import *
+from bisect import bisect
+from sklearn.neighbors import KDTree
+from collections import Counter
+from heapq import nsmallest
+
 
 def init2dict():
     return {}
@@ -55,6 +60,9 @@ class FullMDP(object):
         :param A: Action Space of the MDP
         :param ur: reward for undefined state action pair
         """
+        self.omit_list = ["end_state", "unknown_state"]
+        self.to_commit_sa_list = []
+
         # VI CPU/GPU parameters
         self.vi_params = vi_params
         self.MAX_S_COUNT = MAX_S_COUNT  # Maximum number of state that can be allocated in GPU
@@ -79,12 +87,12 @@ class FullMDP(object):
         self.a2idx = {s: i for i, s in enumerate(self.A)}
         self.idx2a = {i: s for i, s in enumerate(self.A)}
 
-        self.tranCountMatrix_cpu = np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32')
+        # self.tranCountMatrix_cpu = np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32')
         self.tranProbMatrix_cpu = np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32')
         self.tranidxMatrix_cpu = np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32')
         self.rewardMatrix_cpu = np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32')
 
-        self.tranCountMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
+        # self.tranCountMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
         self.tranProbMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
         self.tranidxMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
         self.rewardMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
@@ -130,7 +138,6 @@ class FullMDP(object):
         self.s_pD = {}  # Exploration Policy Vector
 
         # Policy Search , nn parameters
-        self._unhash_dict = {}
         self._total_calls = 0
         self._nn_calls = 0
         self._unhash_idx2s = {}
@@ -196,17 +203,69 @@ class FullMDP(object):
 
             self.update_mdp_matrix_at_cpu_for(s,a)
 
-    def fill_mdp_for_unknown_states(self):
+
+    def hash_state_action(self,s,a):
+        return s + tuple([(a+1)*100000])
+
+    def unhash_state_action(self,sa):
+        return sa[:-1], int(sa[-1]/100000)-1
+
+    def fill_nn_for_s_a(self,s,a):
+        nn_hsa = self._get_nn_hs_kd_with_action_tree(self.hash_state_action(s,a))
+        nn_hs, a_ = self.unhash_state_action(nn_hsa)
+        assert a == a_
+        assert not self.check_if_unknown(nn_hs,a)
+
+        self.tC[s][a] = cpy(self.tC[nn_hs][a])
+        self.rC[s][a] = cpy(self.rC[nn_hs][a])
+        self.update_mdp_for(s,a)
+
+        assert not self.check_if_unknown(s,a)
+
+
+
+    def fill_knn_for_s_a(self, s, a, k=10, delta=1):
+        ns_list = list(self.tD[s][a].keys())
+        nn_and_dist_list = [nn_and_dist_ for ns in ns_list for nn_and_dist_ in self._get_knn_hs_kdtree(ns, k)]
+        nn_and_dist_dict = {nn: dist for nn, dist in nn_and_dist_list}
+
+        if len(nn_and_dist_list) > self.MAX_NS_COUNT:
+            smallest_keys = nsmallest(self.MAX_NS_COUNT, nn_and_dist_dict, key=nn_and_dist_dict.get)
+            nn_and_dist_dict = {k: nn_and_dist_dict[k] for k in smallest_keys}
+
+        all_knn_ns = list(nn_and_dist_dict.keys())
+        all_knn_distances = list(nn_and_dist_dict.values())
+        all_knn_kernels = [1 / (dist + delta) for dist in all_knn_distances]
+        sum_knn_kernels = sum(all_knn_kernels)
+        all_knn_probs = [knn_kernel / sum_knn_kernels for knn_kernel in all_knn_kernels]
+
+        # reset counter and remember transition reward
+        tmp_reward = sum(self.rC[s][a].values()) / sum(self.tC[s][a].values())
+        self.tC[s][a] = init2zero_def_dict()
+        self.rC[s][a] = init2zero_def_dict()
+
+        # add respective counts
+        for i, ns in enumerate(all_knn_ns):
+            self.tC[s][a][ns] += int(all_knn_probs[i] * 100)
+            self.rC[s][a][ns] += tmp_reward * int(all_knn_probs[i] * 100)
+
+        # update the probability ditribution
+        self.update_mdp_for(s, a)
+
+        assert 1.1 > sum(self.tD[s][a].values()) > 0.9
+
+    def fill_mdp_for_fully_unknown_states(self):
         for s in tqdm(self.fully_unknown_states):
-            top_20_nearest_neighbors = self._get_knn_hs_gpu(s, 20)
-            for nn_hs, dist in top_20_nearest_neighbors:
-                if sum([1 for a in self.A if "unknown_state" in self.tD[nn_hs][a]]) < len(self.A):
-                    for a in self.A:
-                        self.tC[s][a] = cpy(self.tC[nn_hs][a])
-                        self.rC[s][a] = cpy(self.rC[nn_hs][a])
-                        self.update_mdp_for(s,a)
-            assert sum([1 for a in self.A if "unknown_state" in self.tD[s][a]]) < len(self.A)
+            for a in self.A:
+                self.fill_nn_for_s_a(s,a)
         self.fully_unknown_states = {}
+
+
+    def fill_nn_for_all_mising_state_action(self):
+        for s in self.tD:
+            for a in self.tD[s]:
+                if self.check_if_unknown(s,a):
+                    self.fill_nn_for_s_a(s,a)
 
     def update_mdp_at_gpu_for_all(self,):
         """
@@ -217,13 +276,13 @@ class FullMDP(object):
                 self.update_mdp_matrix_at_gpu_for(s, a)
 
     def sync_mdp_from_cpu_to_gpu(self,):
-        self.tranCountMatrix_gpu.gpudata.free()
+        # self.tranCountMatrix_gpu.gpudata.free()
         self.tranProbMatrix_gpu.gpudata.free()
         self.tranidxMatrix_gpu.gpudata.free()
         self.rewardMatrix_gpu.gpudata.free()
         self.e_rewardMatrix_gpu.gpudata.free()
 
-        self.tranCountMatrix_gpu = gpuarray.to_gpu(self.tranCountMatrix_cpu)
+        # self.tranCountMatrix_gpu = gpuarray.to_gpu(self.tranCountMatrix_cpu)
         self.tranProbMatrix_gpu = gpuarray.to_gpu(self.tranProbMatrix_cpu)
         self.tranidxMatrix_gpu = gpuarray.to_gpu(self.tranidxMatrix_cpu)
         self.rewardMatrix_gpu = gpuarray.to_gpu(self.rewardMatrix_cpu)
@@ -264,14 +323,6 @@ class FullMDP(object):
         """
 
         if s not in self.tC:
-            # update unhashdict for policy
-            if s not in ["end_state", "unknown_state"]:
-                self._unhash_dict[s] = unhAsh(s)
-                self._unhash_idx2s[len(self._unhash_dict) - 1] = s
-                if self.default_mode == "GPU":
-                    self.nn_searchMatrix_gpu[len(self._unhash_dict) - 1] = gpuarray.to_gpu(
-                        np.array(unhAsh(s)).astype("float32"))
-
             self.fully_unknown_states[s]=1
             curr_idx = len(self.tC)
             self.s2idx[s] = curr_idx
@@ -283,12 +334,6 @@ class FullMDP(object):
                     self.rC[s][a_]["unknown_state"] = self.ur
                     self.update_mdp_for(s, a_)
 
-
-    def reset_searchMatric_gpu(self):
-        self._unhash_dict = {s: unhAsh(s) for s in self.tC if s not in ["end_state", "unknown_state"]}
-        for i, s in enumerate(self._unhash_dict):
-            self.nn_searchMatrix_gpu[i] = gpuarray.to_gpu(np.array(unhAsh(s)).astype("float32"))
-
     def delete_tran_from_counts(self, s, a, ns):
         """
         deletes the given transition from the MDP
@@ -297,7 +342,7 @@ class FullMDP(object):
             del self.tC[s][a][ns]
             del self.rC[s][a][ns]
 
-    def consume_transition(self, tran):
+    def consume_transition(self, tran, fill_knn = False):
         """
         Adds the transition in the MDP
         """
@@ -325,6 +370,8 @@ class FullMDP(object):
 
         # update the transition probability for all other next states.
         self.update_mdp_for(s, a)
+
+        self.to_commit_sa_list.append([s,a])
 
     def get_rmax_reward_logic(self, s, a):
         sa_count = sum(self.tC[s][a].values())
@@ -362,7 +409,6 @@ class FullMDP(object):
 
     def convert_matrix_to_dicts(self):
         assert False
-
 
     def do_optimal_backup(self, mode="CPU", n_backups=1):
         if mode == "CPU":
@@ -638,26 +684,22 @@ class FullMDP(object):
 
     #### Policy Functions ####
 
-    def get_opt_action(self, hs, mode="GPU"):
-        nn_hs = self._get_nn_hs_gpu(hs) if mode == "GPU" else self._get_nn_hs(hs)
+    def get_opt_action(self, hs, mode="KD"):
+        nn_hs = self._get_nn_hs_kdtree(hs) if mode == "KD" else self._get_nn_hs(hs)
         return self.idx2a[np.argmax(self.qD_cpu[self.s2idx[nn_hs]])]
 
-    def get_soft_opt_action(self, hs, mode="GPU"):
-        nn_hs = self._get_nn_hs_gpu(hs) if mode == "GPU" else self._get_nn_hs(hs)
+    def get_soft_opt_action(self, hs, mode="KD"):
+        nn_hs = self._get_nn_hs_kdtree(hs) if mode == "KD" else self._get_nn_hs(hs)
         q_values = self.qD_cpu[self.s2idx[nn_hs]]
         action = random.choices(list(range(len(q_values))), q_values, k=1)[0]
         return action
 
-    # def get_knn_opt_action(self, hs, mode="GPU"):
-    #     nn_hs = self._get_knn_hs_gpu(hs) if mode == "GPU" else self._get_knn_hs(hs)
-    #     return self.idx2a[np.argmax(self.qD_cpu[self.s2idx[nn_hs]])]
-
-    def get_safe_action(self, hs, mode="GPU"):
-        nn_hs = self._get_nn_hs_gpu(hs) if mode == "GPU" else self._get_nn_hs(hs)
+    def get_safe_action(self, hs, mode="KD"):
+        nn_hs = self._get_nn_hs_kdtree(hs) if mode == "KD" else self._get_nn_hs(hs)
         return self.idx2a[np.argmax(self.s_qD_cpu[self.s2idx[nn_hs]])]
 
-    def get_explr_action(self, hs, mode="GPU"):
-        nn_hs = self._get_nn_hs_gpu(hs) if mode == "GPU" else self._get_nn_hs(hs)
+    def get_explr_action(self, hs, mode="KD"):
+        nn_hs = self._get_nn_hs_kdtree(hs) if mode == "KD" else self._get_nn_hs(hs)
         return self.idx2a[np.argmax(self.e_qD_cpu[self.s2idx[nn_hs]])]
 
     def _get_nn_hs(self, hs):
@@ -674,77 +716,104 @@ class FullMDP(object):
         return nearest_neighbor_hs
 
     def get_state_count(self):
-        return len(self._unhash_dict)
+        return len(self.s2idx)
 
     def _update_nn_kd_tree(self):
-        pass
+        state_list = [s for s in self.tD if s not in self.omit_list]
+        self.state_list = state_list
+        self.KDTree = KDTree(np.array(state_list), leaf_size=2)
+
+    def _update_nn_kd_with_action_tree(self):
+        state_action_list = [self.hash_state_action(s,a) for s in self.tD for a in self.tD[s] if s not in self.omit_list and not self.check_if_unknown(s,a)]
+        self.state_action_list = state_action_list
+        self.KDTree_with_action = KDTree(np.array(state_action_list), leaf_size=2)
+
+    def _get_nn_hs_kd_with_action_tree(self, hsa ):
+        nn_dist, nn_idx = self.KDTree_with_action.query(np.array([hsa]), k=1)
+        nearest_neighbor_hsa = self.state_action_list[int(nn_idx.squeeze())]
+        return nearest_neighbor_hsa
+
+    def _get_knn_hs_kd_with_action_tree(self, hsa,k):
+        nn_dist, nn_idx = self.KDTree_with_action.query(np.array([hsa]), k=k)
+        return list(zip([self.state_action_list[int(idx)] for idx in nn_idx.squeeze()], nn_dist.squeeze()))
 
     def _get_nn_hs_kdtree(self, hs):
-        pass
-
-    def _get_knn_hs_kdtree(self, hs):
-        pass
-
-    def _get_nn_hs_gpu(self, hs):
         self._total_calls += 1
         if hs in self.s2idx:
             nearest_neighbor_hs = hs
         else:
-            self._nn_calls += 1
-            distance_vector = self.calc_dist_vect_gpu(self.nn_searchMatrix_gpu, np.array(unhAsh(hs)))
-            min_id = np.argmin(distance_vector)
-            nearest_neighbor_hs = self.idx2s[min_id + 2]
+            nn_dist, nn_idx = self.KDTree.query(np.array([hs]), k=1)
+            nearest_neighbor_hs = self.state_list[int(nn_idx.squeeze())]
+
         return nearest_neighbor_hs
 
-    def _get_knn_hs_gpu(self, hs, k):
-        distance_vector = self.calc_dist_vect_gpu(self.nn_searchMatrix_gpu, np.array(unhAsh(hs)))
-        # nearest_neighbor_hs = self._unhash_idx2s[np.argmin(distance_vector)]
-        hm_dist_dict = {s_hat: distance_vector[self.s2idx[s_hat]-2] for s_hat in self.s2idx if s_hat not in ["end_state", "unknown_state"]}
-        most_common_ns = Counter(hm_dist_dict).most_common()[:-k-1:-1]
+    def _get_knn_hs_kdtree(self, hs, k):
+        if hs in self.omit_list:
+            return [(hs,0)]
 
-        return most_common_ns
+        nn_dist, nn_idx = self.KDTree.query(np.array([hs]), k=k)
+        return list(zip([self.state_list[int(idx)] for idx in nn_idx.squeeze()], nn_dist.squeeze()))
 
-    def calc_dist_vect_gpu(self, searchMatrix, queryVector):
-        # Define kernel code template
-        import pycuda.autoinit
-        POP_COUNT, VEC_SIZE = searchMatrix.shape
-        InVector = gpuarray.to_gpu(np.array(queryVector, dtype= numpy.float32))
-        OutVector = gpuarray.to_gpu(np.zeros((POP_COUNT,), dtype=numpy.float32))
-        SearcVector = gpuarray.to_gpu(searchMatrix)
+    # def _get_nn_hs_gpu(self, hs):
+    #     self._total_calls += 1
+    #     if hs in self.s2idx:
+    #         nearest_neighbor_hs = hs
+    #     else:
+    #         self._nn_calls += 1
+    #         distance_vector = self.calc_dist_vect_gpu(self.nn_searchMatrix_gpu, np.array(unhAsh(hs)))
+    #         min_id = np.argmin(distance_vector)
+    #         nearest_neighbor_hs = self.idx2s[min_id + 2]
+    #     return nearest_neighbor_hs
 
-        MATRIX_SIZE = mth.ceil(mth.sqrt(POP_COUNT))
-        BLOCK_SIZE = 16
-
-        if MATRIX_SIZE % BLOCK_SIZE != 0:
-            grid = (MATRIX_SIZE // BLOCK_SIZE + 1, MATRIX_SIZE // BLOCK_SIZE + 1, 1)
-        else:
-            grid = (MATRIX_SIZE // BLOCK_SIZE, MATRIX_SIZE // BLOCK_SIZE, 1)
-
-        # Define actual kernel
-        kernel_code = NN_kernel_code_template % {
-            'MATRIX_SIZE': MATRIX_SIZE,
-            'VEC_SIZE': VEC_SIZE,
-            'POP_COUNT': POP_COUNT
-        }
-
-        # Compile and get function
-        mod = compiler.SourceModule(kernel_code)
-        get_nearest_fxn = mod.get_function("NNKernel")
-
-        # call the function
-        get_nearest_fxn(  # inputs
-            InVector, OutVector, SearcVector,
-            # grid
-            grid=grid,
-            # (only one) block of MATRIX_SIZE x MATRIX_SIZE threads
-            block=(BLOCK_SIZE, BLOCK_SIZE, 1))
-
-        OutVector_cpu = OutVector.get()
-        SearcVector.gpudata.free()
-        InVector.gpudata.free()
-        OutVector.gpudata.free()
-        # return out vector
-        return OutVector_cpu
+    # def _get_knn_hs_gpu(self, hs, k):
+    #     distance_vector = self.calc_dist_vect_gpu(self.nn_searchMatrix_gpu, np.array(unhAsh(hs)))
+    #     # nearest_neighbor_hs = self._unhash_idx2s[np.argmin(distance_vector)]
+    #     hm_dist_dict = {s_hat: distance_vector[self.s2idx[s_hat]-2] for s_hat in self.s2idx if s_hat not in ["end_state", "unknown_state"]}
+    #     most_common_ns = Counter(hm_dist_dict).most_common()[:-k-1:-1]
+    #
+    #     return most_common_ns
+    #
+    # def calc_dist_vect_gpu(self, searchMatrix, queryVector):
+    #     # Define kernel code template
+    #     import pycuda.autoinit
+    #     POP_COUNT, VEC_SIZE = searchMatrix.shape
+    #     InVector = gpuarray.to_gpu(np.array(queryVector, dtype= numpy.float32))
+    #     OutVector = gpuarray.to_gpu(np.zeros((POP_COUNT,), dtype=numpy.float32))
+    #     SearcVector = gpuarray.to_gpu(searchMatrix)
+    #
+    #     MATRIX_SIZE = mth.ceil(mth.sqrt(POP_COUNT))
+    #     BLOCK_SIZE = 16
+    #
+    #     if MATRIX_SIZE % BLOCK_SIZE != 0:
+    #         grid = (MATRIX_SIZE // BLOCK_SIZE + 1, MATRIX_SIZE // BLOCK_SIZE + 1, 1)
+    #     else:
+    #         grid = (MATRIX_SIZE // BLOCK_SIZE, MATRIX_SIZE // BLOCK_SIZE, 1)
+    #
+    #     # Define actual kernel
+    #     kernel_code = NN_kernel_code_template % {
+    #         'MATRIX_SIZE': MATRIX_SIZE,
+    #         'VEC_SIZE': VEC_SIZE,
+    #         'POP_COUNT': POP_COUNT
+    #     }
+    #
+    #     # Compile and get function
+    #     mod = compiler.SourceModule(kernel_code)
+    #     get_nearest_fxn = mod.get_function("NNKernel")
+    #
+    #     # call the function
+    #     get_nearest_fxn(  # inputs
+    #         InVector, OutVector, SearcVector,
+    #         # grid
+    #         grid=grid,
+    #         # (only one) block of MATRIX_SIZE x MATRIX_SIZE threads
+    #         block=(BLOCK_SIZE, BLOCK_SIZE, 1))
+    #
+    #     OutVector_cpu = OutVector.get()
+    #     SearcVector.gpudata.free()
+    #     InVector.gpudata.free()
+    #     OutVector.gpudata.free()
+    #     # return out vector
+    #     return OutVector_cpu
 
 
     def solve(self, eps = 1e-5, mode = None):
@@ -762,13 +831,22 @@ class FullMDP(object):
         print("Time takedn to solve",et-st)
 
 
+
     @property
     def unknown_state_count(self):
-        c = 0
-        for s in mdp_T.tD:
-            if sum([1 for a in mdp_T.A if "unknown_state" in mdp_T.tD[s][a]]) == len(mdp_T.A):
-                c += 1
-        return c
+        return sum([self.check_if_unknown(s) for s in self.tD])
+
+    @property
+    def unknown_state_action_count(self):
+        return sum([self.check_if_unknown(s,a) for s in self.tD for a in self.tD[s]])
+
+    def check_if_unknown(self, s, a = None):
+        if s == "unknown_state":
+            return False
+        if a is not None:
+            return "unknown_state" in self.tD[s][a]
+        else:
+            return sum([1 for a in self.A if "unknown_state" in self.tD[s][a]]) == len(self.A)
 
     def get_seen_action_count(self, s):
         return sum([1 for a in self.tC[s] if "unknown_state" not in self.tC[s][a]])
