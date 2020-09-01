@@ -53,10 +53,14 @@ def cache_data(data, file_path):
 
 
 def fetch_from_cache(file_path):
-    with open(file_path, 'rb') as file:
-        data = pk.load(file)
-    logger.debug("fetched from cache:{}".format(file_path)  )# todo add it to logger
-    return data
+    if os.path.exists(file_path):
+        with open(file_path, 'rb') as file:
+            data = pk.load(file)
+        logger.debug("Successfully fetched from cache:{}".format(file_path)  )# todo add it to logger
+        return data
+    else:
+        logger.debug("Could not Fetch, File Does not Exist: {}".format(file_path))
+        return False
 
 
 def create_hierarchy(folders):

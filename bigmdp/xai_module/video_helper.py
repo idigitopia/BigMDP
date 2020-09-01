@@ -17,6 +17,14 @@ def pad_image_with_one(img_arr, new_width):
     return padded_img_arr
 
 
+def write_video(frames, title, path=''):
+    #   frames = np.multiply(np.stack(frames, axis=0).transpose(0, 2, 3, 1), 255).clip(0, 255).astype(np.uint8)[:, :, :, ::-1]  # VideoWrite expects H x W x C in BGR
+    _, H, W, _ = frames.shape
+    writer = cv2.VideoWriter(os.path.join(path, '%s.mp4' % title), cv2.VideoWriter_fourcc(*'mp4v'), 30., (W, H), True)
+    for frame in frames:
+        writer.write(frame)
+    writer.release()
+
 # def get_match_dict(img_buffer, latent_buffer, latent_to_disc_fxn):
 #     disc_buffer = get_disc_buffer_from_latent_buffer(latent_buffer, latent_to_disc_fxn)
 #     state_to_image_dict = defaultdict(init_with_list)
@@ -36,13 +44,6 @@ def pad_image_with_one(img_arr, new_width):
 #         state_to_image_dict[disc_buffer[i]].append(i)
 #
 #     return state_to_image_dict
-
-
-# A = [i for i in range(env.action_space.n)]
-#
-# print("SanityCheck , getting embedded dqn performance")
-# state_to_image_dict_ = get_match_dict(img_buffer, img_latent_buffer, latent_to_discrete_fxn)
-# print("Total number of states", len(state_to_image_dict_.keys()))
 
 
 def get_printed_array(img_arr, print_offset=(4, 4), to_print_dict={"Metrics": "Not Found"}, font_size=8,
@@ -144,8 +145,6 @@ def make_one_row(list_of_lazy_frames, row_title="Default Title", title_height=20
         row_img = add_title_on_top(row_img, title_height, title_text=row_title, font_size=12)
 
     return row_img
-
-
 
 
 def do_a_tree_search(s, tD, rD, vD, pD, nn_fxn, mode="most_probable"):

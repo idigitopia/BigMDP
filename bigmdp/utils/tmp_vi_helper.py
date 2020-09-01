@@ -48,7 +48,7 @@ def hm_dist(l1: list, l2: list):
 
 
 
-def evaluate_on_env(env, policy_func, eps_count=30, verbose=False, render = False, lag = 0):
+def evaluate_on_env(env, policy_func, eps_count=30, verbose=False, render = False, lag = 0, progress_bar=True, every_step_hook=None):
     """
     takes input environment and a policy and returns average rewards
     latent policy flag = True if the policy is a discrete policy
@@ -63,19 +63,24 @@ def evaluate_on_env(env, policy_func, eps_count=30, verbose=False, render = Fals
 
     eps_rewards, eps_step_counts = [],[]
     run_info = {}
+    iter__ = tqdm(range(eps_count)) if progress_bar else range(eps_count)
+    action_counts = defaultdict(lambda :0)
 
-    for e in tqdm(range(eps_count)):
+    for e in iter__:
         sum_rewards, sum_steps = 0,0
         state_c = env.reset()
 
         done = False
         steps = 0
 
-        while steps < env.max_episode_length and not done:
+        while sum_steps < env.max_episode_length and not done:
             sum_steps += 1
             policyAction = policy_func(state_c)
+            action_counts[policyAction] += 1
             state_c, reward, done, info = env.step(policyAction)
             sum_rewards += reward
+            if every_step_hook is not None:
+                every_step_hook(env, state_c)
             if(render):
                 env.render(mode = "human")
                 time.sleep(lag)
@@ -91,11 +96,14 @@ def evaluate_on_env(env, policy_func, eps_count=30, verbose=False, render = Fals
 
 
     info = {"avg_reward":  mean(eps_rewards),
+            "std_reward": np.std(eps_rewards),
             "avg_steps": mean(eps_step_counts),
+            "std_steps" : np.std(eps_step_counts),
             "max_reward":  max(eps_rewards),
             "min_reward":  min(eps_rewards),
             "max_steps": max(eps_step_counts),
             "min_steps": min(eps_step_counts) ,
+            "action_counts": action_counts,
             "run_info": run_info}
 
     return info["avg_reward"], info

@@ -38,7 +38,14 @@ class SimpleGymEnv:
         self.seed = seed
         if self.seed is not None:
             self._env.seed(seed)
-        self.max_episode_length = min(self._env._max_episode_steps, max_episode_length)
+        try:
+            self.max_episode_length = min(self._env._max_episode_steps, max_episode_length)
+            if (self._env._max_episode_steps < max_episode_length):
+                logger.warn(
+                    "Max episode length of {} over-rided by internal max_episode_steps of {}".format(max_episode_length,
+                                                                                                     self._env._max_episode_steps))
+        except:
+            self.max_episode_length = max_episode_length
         self.action_repeat_mask = action_repeat_mask or {a:1 for a in  self.get_list_of_actions()}
 
         self.step_count = 0
@@ -46,10 +53,6 @@ class SimpleGymEnv:
         self.performance_as_steps = None
         self.quantization_level = quantization_level
         self.shaped_reward = shaped_reward
-        if (self._env._max_episode_steps < max_episode_length):
-            logger.warn("Max episode length of {} over-rided by internal max_episode_steps of {}".format(max_episode_length,
-                                                                                                         self._env._max_episode_steps))
-
 
     def set_state(self, s_c):
         if hasattr(self._env, "env"):
@@ -73,7 +76,7 @@ class SimpleGymEnv:
             next_obs, reward, done, info = self._env.step(action)
             reward = get_shaped_reward(self.env_name, self.state, next_obs) if self.shaped_reward else reward
             reward_k += reward
-            done = done or self.step_count == self.max_episode_length
+            done = done or self.step_count >= self.max_episode_length
             if done:
                 break
 
