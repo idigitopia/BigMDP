@@ -1,7 +1,7 @@
 # Big MDP
 
-Library for building, solving and visualizing large Markov Decision processes. 
-
+Library for building, solving and visualizing large Markov Decision processes. [Under development] 
+refer to examples/decimaltest for basic usage
 
 # Installation 
 
