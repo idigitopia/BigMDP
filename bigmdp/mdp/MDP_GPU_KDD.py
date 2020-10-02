@@ -639,7 +639,7 @@ class FullMDP(object):
     def sample_action_from_qval_dict(self,qval_dict):
         return random.choices(list(qval_dict.keys()), list(qval_dict.values()), k=1)[0]
 
-    def get_action_from_q_matrix(self, hs, qMatrix, smoothing = False, soft_q = False ):
+    def get_action_from_q_matrix(self, hs, qMatrix, smoothing = False, soft_q = False, weight_nn = False):
         if smoothing:
             if self.smooth_with_seen:
                 qval_dict = {}
@@ -649,8 +649,14 @@ class FullMDP(object):
                     qval_dict[a] =  qval_a
             else:
                 knn_hs = self._get_knn_hs_kdtree(hs, k=self.plcy_lift_k)
-                all_qval_dict = [{self.idx2a[i]: qval for i, qval in enumerate(qMatrix[self.s2idx[nn_hs]])} for nn_hs in knn_hs]
-                qval_dict = {a:np.mean([_qval_dict[a] for _qval_dict in all_qval_dict]) for a in self.A}
+                if weight_nn:
+                    knn_hs_normalized = self.get_kernel_probs(knn_hs, delta=self.knn_delta)
+                    all_qval_dict = [{self.idx2a[i]: qval*norm_dist for i, qval in enumerate(qMatrix[self.s2idx[nn_hs]])} for nn_hs, norm_dist in knn_hs_normalized.items()]
+                    qval_dict = {a:np.sum([_qval_dict[a] for _qval_dict in all_qval_dict]) for a in self.A}
+                else:
+                    all_qval_dict = [{self.idx2a[i]: qval for i, qval in enumerate(qMatrix[self.s2idx[nn_hs]])} for nn_hs in knn_hs]
+                    qval_dict = {a: np.mean([_qval_dict[a] for _qval_dict in all_qval_dict]) for a in self.A}
+
         else:
             nn_hs = self._get_nn_hs_kdtree(hs)
             qval_dict = {self.idx2a[i]:qval for i, qval in enumerate(qMatrix[self.s2idx[nn_hs]])}
@@ -660,14 +666,14 @@ class FullMDP(object):
         else:
             return max(qval_dict, key=qval_dict.get)
 
-    def get_opt_action(self, hs ,smoothing = False, soft_q = False):
-        return self.get_action_from_q_matrix(hs,self.qD_cpu, smoothing=smoothing, soft_q=soft_q)
+    def get_opt_action(self, hs ,smoothing = False, soft_q = False, weight_nn = False):
+        return self.get_action_from_q_matrix(hs,self.qD_cpu, smoothing=smoothing, soft_q=soft_q, weight_nn=weight_nn)
 
-    def get_safe_action(self, hs, smoothing = False, soft_q = False):
-        return self.get_action_from_q_matrix(hs,self.s_qD_cpu,  smoothing=smoothing, soft_q=soft_q)
+    def get_safe_action(self, hs, smoothing = False, soft_q = False, weight_nn = False):
+        return self.get_action_from_q_matrix(hs,self.s_qD_cpu,  smoothing=smoothing, soft_q=soft_q, weight_nn=weight_nn)
 
-    def get_explr_action(self, hs, smoothing = False, soft_q = False):
-        return self.get_action_from_q_matrix(hs, self.e_qD_cpu, smoothing=smoothing, soft_q=soft_q)
+    def get_explr_action(self, hs, smoothing = False, soft_q = False, weight_nn = False):
+        return self.get_action_from_q_matrix(hs, self.e_qD_cpu, smoothing=smoothing, soft_q=soft_q, weight_nn=weight_nn)
 
     def get_state_count(self):
         return len(self.s2idx)

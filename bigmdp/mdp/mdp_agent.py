@@ -4,13 +4,29 @@ from bigmdp.utils.tmp_vi_helper import *
 from bigmdp.xai_module.rollout_visualizer import *
 from sklearn.neighbors import KDTree
 import plotly.graph_objects as go
+import collections
+from collections import namedtuple
 
 # from wrappers import *
+MDPUnit = namedtuple('MDPUnit', 'tranProb origReward dist')
 
 import pickle as pk
 from os import path
+
+def init2dict():
+    return {}
+
 def init2list():
     return []
+
+def init2zero():
+    return 0
+
+def init2zero_def_dict():
+    return defaultdict(init2zero)
+
+def init2zero_def_def_dict():
+    return defaultdict(init2zero_def_dict)
 
 def get_error_metrics_parametric(myAgent,tran_buffer):
     # all_transitions = tran_buffer.buffer
@@ -82,7 +98,8 @@ class SimpleAgent(object):
         self.to_commit_sa_pairs = defaultdict(init2zero)
         self.to_commit_transitions = []
         self.dist_to_nn_cache = []
-
+        self.mdp_cache= defaultdict(init2zero_def_def_dict)
+        self.orig_reward_cache = defaultdict(init2zero_def_def_dict)
         self.iter = 0
         self.KDTree = None
 
@@ -92,10 +109,10 @@ class SimpleAgent(object):
 
 
     def opt_policy(self, obs):
-        return self.mdp_T.get_opt_action(self.net.encode_single(obs), smoothing=self.smoothing, soft_q=self.soft_q)
+        return self.mdp_T.get_opt_action(self.net.encode_single(obs), smoothing=self.smoothing, soft_q=self.soft_q, weight_nn=self.normalize_by_distance)
 
     def safe_policy(self, obs):
-        return self.mdp_T.get_safe_action(self.net.encode_single(obs), smoothing=self.smoothing, soft_q=self.soft_q)
+        return self.mdp_T.get_safe_action(self.net.encode_single(obs), smoothing=self.smoothing, soft_q=self.soft_q, weight_nn=self.normalize_by_distance)
 
     def eps_optimal_policy(self, obs):
         eps_opt_pol = get_eps_policy(self.opt_policy, self.random_policy, epsilon=0.1)
@@ -298,6 +315,9 @@ class SimpleAgent(object):
                             continue # getting rid of highly improbable transitions
                         self.mdp_T.tC[s_][a_][nn_ns] += tran_count
                         self.mdp_T.rC[s_][a_][nn_ns] += reward_count
+                        self.mdp_cache[s_][a_][nn_ns] = MDPUnit(prob_ns, r, dist_to_nn_s)
+                        self.orig_reward_cache[s_][a_][nn_ns] = r
+
                 try:
                     self.mdp_T.filter_sa_count_for_max_ns_count(s_, a_)
                     # update the probability ditribution
@@ -310,114 +330,114 @@ class SimpleAgent(object):
             self.to_commit_sa_pairs = defaultdict(init2zero)
             self.to_commit_transitions = []
 
-        elif self.fill_with == "1Q_dst-KNN":
-            #### House Keeping ####
-            print("Implementation of Plannable repr Framework with costs called with Hyperparmeters, CodeName:",
-                  self.fill_with)
-            print("K={} - Nearest Neighbors, Penalty Type:{}, penalty_beta:{}"
-                  .format(self.mdp_T.mdp_build_k, self.penalty_type, self.penalty_beta))
-            #
-            # if self.sample_neighbors:
-            #     print("#" * 40, "Warning", "#" * 40, "\n",
-            #           "Sampling neighbors is invalide for K-NN case proceeding without sampling nearest neighbors")
-            ###############################################################################
-
-            iterator_ = self.to_commit_sa_pairs.items()
-            iterator_ = tqdm(iterator_) if verbose else iterator_
-
-            for sa_pair, seen_flag in iterator_:
-                if seen_flag: # and not self.sample_neighbors:
-                    continue # if it is a seen state action pair and we dont need to sample neighbors then nothing to do here.
-
-                # Calculate nearest neighbors of the state action in question and the ns they are pointing towards.
-                s_, a_ = sa_pair
-                pred_ns, pred_r, pred_d = self.net.predict_single_transition(s_, a_)
-                knn_ns = {"end_state": 1e-20} if pred_d else self.mdp_T._get_knn_hs_kdtree(pred_ns, k=self.mdp_T.mdp_build_k)
-                knn_ns_normalized = self.mdp_T.get_kernel_probs(knn_ns, delta=self.mdp_T.knn_delta)
-                # assert all([len(self.mdp_T.tD[sa[0]][sa[1]])==1 for sa in knn_sa]), "Non stotchastic dynamics is not handled , please update the codebase"
-                knn_sa_tran = {nn_ns:(s_, a_, pred_r, nn_ns, dist_to_nn_ns,knn_ns_normalized[nn_ns])
-                                for nn_ns,dist_to_nn_ns in knn_ns.items()}
-
-                # Update the MDP transition probabilities with respect the found nearest neighbors
-                # Reset Counts
-                self.mdp_T.reset_counts_for_sa(s_, a_)
-
-                for nn_s, a,r, nn_ns, dist_to_nn_s, prob_ns in knn_sa_tran.values():
-                    tran_count = int(prob_ns*100) if self.normalize_by_distance else 1
-                    disc_reward = self.get_reward_logic(r, dist_to_nn_s, self.penalty_type, self.penalty_beta)
-                    reward_count = int(prob_ns * 100) * disc_reward if self.normalize_by_distance else disc_reward
-                    assert a==a_
-                    if self.normalize_by_distance and prob_ns < 0.001:
-                        continue  # getting rid of highly improbable transitions
-                    self.mdp_T.tC[s_][a_][nn_ns] += tran_count
-                    self.mdp_T.rC[s_][a_][nn_ns] += reward_count
-
-                self.mdp_T.filter_sa_count_for_max_ns_count(s_, a_)
-                # update the probability ditribution
-                self.mdp_T.update_mdp_for(s_, a_)
-
-                # assert self.mdp_T.def_k > len(self.mdp_T.tD[s_][a_]) , "The number of next states is not supposet to be greater than the value for k"
-            # clear to commit caches m set all as comited
-            self.to_commit_sa_pairs = defaultdict(init2zero)
-            self.to_commit_transitions = []
-
-        elif self.fill_with == "kkQ_dst-1NN":
-            #### House Keeping ####
-            print("Implementation of Voronoi sampling  Framework with costs called with Hyperparmeters, CodeName:",
-                  self.fill_with)
-            print("K_q={} - Nearest Neighbors, Penalty Type:{}, penalty_beta:{}"
-                  .format(self.mdp_T.mdp_build_k, self.penalty_type, self.penalty_beta))
-
-            assert not self.normalize_by_distance , "This logic is yet to be verified, may play bad in this config for seen transitions"
-
-            # if not self.sample_neighbors:
-            #     print("#" * 40, "Warning", "#" * 40, "\n",
-            #           "Sampling neighbors must be on for this , automatically switching it on")
-            #     self.sample_neighbors = True
-            ###############################################################################
-
-            iterator_ = self.to_commit_sa_pairs.items()
-            iterator_ = tqdm(iterator_) if verbose else iterator_
-
-            for sa_pair, seen_flag in iterator_:
-                if seen_flag: # and not self.sample_neighbors:
-                    pass  # We dont care if we see or dont see a transition , we continue
-
-                # Calculate nearest neighbors of the state action in question and the ns they are pointing towards.
-                s_, a_ = sa_pair
-                voronoi_samples = self.get_voronoi_samples(s_, self.mdp_T.mdp_build_k)
-                assert len(voronoi_samples)
-                k_predictions = {sample_s:self.net.predict_single_transition(sample_s, a_) for sample_s in voronoi_samples}
-                knn_ns_normalized = self.mdp_T.get_kernel_probs(voronoi_samples, delta=self.mdp_T.knn_delta)
-                # k_predictions[s] = pred_ns, pred_r, pred_ d
-                knn_sa_tran = {sample_s: (s_, a_, k_predictions[sample_s][1],
-                               "end_state" if k_predictions[sample_s][2]
-                                          else self.mdp_T._get_nn_hs_kdtree(k_predictions[sample_s][0]),
-                                dist_to_sample, knn_ns_normalized[sample_s])
-                               for sample_s, dist_to_sample in voronoi_samples.items()}
-
-                # Update the MDP transition probabilities with respect the found nearest neighbors
-                # Reset Counts
-                self.mdp_T.reset_counts_for_sa(s_, a_)
-
-                for nn_s, a,r, nn_ns, dist_to_nn_s, prob_ns in knn_sa_tran.values():
-                    tran_count = int(prob_ns*100) if self.normalize_by_distance else 1
-                    disc_reward = self.get_reward_logic(r, dist_to_nn_s, self.penalty_type, self.penalty_beta)
-                    reward_count = int(prob_ns * 100) * disc_reward if self.normalize_by_distance else disc_reward
-                    assert a==a_
-                    if self.normalize_by_distance and prob_ns < 0.001:
-                        continue  # getting rid of highly improbable transitions
-                    self.mdp_T.tC[s_][a_][nn_ns] += tran_count
-                    self.mdp_T.rC[s_][a_][nn_ns] += reward_count
-
-                self.mdp_T.filter_sa_count_for_max_ns_count(s_, a_)
-                # update the probability ditribution
-                self.mdp_T.update_mdp_for(s_, a_)
-
-                # assert self.mdp_T.def_k > len(self.mdp_T.tD[s_][a_]) , "The number of next states is not supposet to be greater than the value for k"
-            # clear to commit caches m set all as comited
-            self.to_commit_sa_pairs = defaultdict(init2zero)
-            self.to_commit_transitions = []
+        # elif self.fill_with == "1Q_dst-KNN":
+        #     #### House Keeping ####
+        #     print("Implementation of Plannable repr Framework with costs called with Hyperparmeters, CodeName:",
+        #           self.fill_with)
+        #     print("K={} - Nearest Neighbors, Penalty Type:{}, penalty_beta:{}"
+        #           .format(self.mdp_T.mdp_build_k, self.penalty_type, self.penalty_beta))
+        #     #
+        #     # if self.sample_neighbors:
+        #     #     print("#" * 40, "Warning", "#" * 40, "\n",
+        #     #           "Sampling neighbors is invalide for K-NN case proceeding without sampling nearest neighbors")
+        #     ###############################################################################
+        #
+        #     iterator_ = self.to_commit_sa_pairs.items()
+        #     iterator_ = tqdm(iterator_) if verbose else iterator_
+        #
+        #     for sa_pair, seen_flag in iterator_:
+        #         if seen_flag: # and not self.sample_neighbors:
+        #             continue # if it is a seen state action pair and we dont need to sample neighbors then nothing to do here.
+        #
+        #         # Calculate nearest neighbors of the state action in question and the ns they are pointing towards.
+        #         s_, a_ = sa_pair
+        #         pred_ns, pred_r, pred_d = self.net.predict_single_transition(s_, a_)
+        #         knn_ns = {"end_state": 1e-20} if pred_d else self.mdp_T._get_knn_hs_kdtree(pred_ns, k=self.mdp_T.mdp_build_k)
+        #         knn_ns_normalized = self.mdp_T.get_kernel_probs(knn_ns, delta=self.mdp_T.knn_delta)
+        #         # assert all([len(self.mdp_T.tD[sa[0]][sa[1]])==1 for sa in knn_sa]), "Non stotchastic dynamics is not handled , please update the codebase"
+        #         knn_sa_tran = {nn_ns:(s_, a_, pred_r, nn_ns, dist_to_nn_ns,knn_ns_normalized[nn_ns])
+        #                         for nn_ns,dist_to_nn_ns in knn_ns.items()}
+        #
+        #         # Update the MDP transition probabilities with respect the found nearest neighbors
+        #         # Reset Counts
+        #         self.mdp_T.reset_counts_for_sa(s_, a_)
+        #
+        #         for nn_s, a,r, nn_ns, dist_to_nn_s, prob_ns in knn_sa_tran.values():
+        #             tran_count = int(prob_ns*100) if self.normalize_by_distance else 1
+        #             disc_reward = self.get_reward_logic(r, dist_to_nn_s, self.penalty_type, self.penalty_beta)
+        #             reward_count = int(prob_ns * 100) * disc_reward if self.normalize_by_distance else disc_reward
+        #             assert a==a_
+        #             if self.normalize_by_distance and prob_ns < 0.001:
+        #                 continue  # getting rid of highly improbable transitions
+        #             self.mdp_T.tC[s_][a_][nn_ns] += tran_count
+        #             self.mdp_T.rC[s_][a_][nn_ns] += reward_count
+        #
+        #         self.mdp_T.filter_sa_count_for_max_ns_count(s_, a_)
+        #         # update the probability ditribution
+        #         self.mdp_T.update_mdp_for(s_, a_)
+        #
+        #         # assert self.mdp_T.def_k > len(self.mdp_T.tD[s_][a_]) , "The number of next states is not supposet to be greater than the value for k"
+        #     # clear to commit caches m set all as comited
+        #     self.to_commit_sa_pairs = defaultdict(init2zero)
+        #     self.to_commit_transitions = []
+        #
+        # elif self.fill_with == "kkQ_dst-1NN":
+        #     #### House Keeping ####
+        #     print("Implementation of Voronoi sampling  Framework with costs called with Hyperparmeters, CodeName:",
+        #           self.fill_with)
+        #     print("K_q={} - Nearest Neighbors, Penalty Type:{}, penalty_beta:{}"
+        #           .format(self.mdp_T.mdp_build_k, self.penalty_type, self.penalty_beta))
+        #
+        #     assert not self.normalize_by_distance , "This logic is yet to be verified, may play bad in this config for seen transitions"
+        #
+        #     # if not self.sample_neighbors:
+        #     #     print("#" * 40, "Warning", "#" * 40, "\n",
+        #     #           "Sampling neighbors must be on for this , automatically switching it on")
+        #     #     self.sample_neighbors = True
+        #     ###############################################################################
+        #
+        #     iterator_ = self.to_commit_sa_pairs.items()
+        #     iterator_ = tqdm(iterator_) if verbose else iterator_
+        #
+        #     for sa_pair, seen_flag in iterator_:
+        #         if seen_flag: # and not self.sample_neighbors:
+        #             pass  # We dont care if we see or dont see a transition , we continue
+        #
+        #         # Calculate nearest neighbors of the state action in question and the ns they are pointing towards.
+        #         s_, a_ = sa_pair
+        #         voronoi_samples = self.get_voronoi_samples(s_, self.mdp_T.mdp_build_k)
+        #         assert len(voronoi_samples)
+        #         k_predictions = {sample_s:self.net.predict_single_transition(sample_s, a_) for sample_s in voronoi_samples}
+        #         knn_ns_normalized = self.mdp_T.get_kernel_probs(voronoi_samples, delta=self.mdp_T.knn_delta)
+        #         # k_predictions[s] = pred_ns, pred_r, pred_ d
+        #         knn_sa_tran = {sample_s: (s_, a_, k_predictions[sample_s][1],
+        #                        "end_state" if k_predictions[sample_s][2]
+        #                                   else self.mdp_T._get_nn_hs_kdtree(k_predictions[sample_s][0]),
+        #                         dist_to_sample, knn_ns_normalized[sample_s])
+        #                        for sample_s, dist_to_sample in voronoi_samples.items()}
+        #
+        #         # Update the MDP transition probabilities with respect the found nearest neighbors
+        #         # Reset Counts
+        #         self.mdp_T.reset_counts_for_sa(s_, a_)
+        #
+        #         for nn_s, a,r, nn_ns, dist_to_nn_s, prob_ns in knn_sa_tran.values():
+        #             tran_count = int(prob_ns*100) if self.normalize_by_distance else 1
+        #             disc_reward = self.get_reward_logic(r, dist_to_nn_s, self.penalty_type, self.penalty_beta)
+        #             reward_count = int(prob_ns * 100) * disc_reward if self.normalize_by_distance else disc_reward
+        #             assert a==a_
+        #             if self.normalize_by_distance and prob_ns < 0.001:
+        #                 continue  # getting rid of highly improbable transitions
+        #             self.mdp_T.tC[s_][a_][nn_ns] += tran_count
+        #             self.mdp_T.rC[s_][a_][nn_ns] += reward_count
+        #
+        #         self.mdp_T.filter_sa_count_for_max_ns_count(s_, a_)
+        #         # update the probability ditribution
+        #         self.mdp_T.update_mdp_for(s_, a_)
+        #
+        #         # assert self.mdp_T.def_k > len(self.mdp_T.tD[s_][a_]) , "The number of next states is not supposet to be greater than the value for k"
+        #     # clear to commit caches m set all as comited
+        #     self.to_commit_sa_pairs = defaultdict(init2zero)
+        #     self.to_commit_transitions = []
 
         elif self.fill_with == "none":
             print("Leaving the unknown  state actions ot the same state")
@@ -480,9 +500,8 @@ class SimpleAgent(object):
     def save_mdp(self, file_path):
         st = time.time()
         print("Saving MDP and learnt net")
-        
-        mdp_and_learnt_net = (self.mdp_T, self.net.learnt_net.state_dict(), self.net.learnt_net.pca if hasattr(self.net.learnt_net, "pca") else None)
-        other_variables = {"nn"}
+
+        mdp_and_learnt_net = (self.mdp_T, self.net.state_dict(), self.net.pca if hasattr(self.net, "pca") else None)
         pk.dump(mdp_and_learnt_net, open(file_path, "wb"))
         
         sec_file_path = "".join(["".join(file_path.split(".")[:-1]) ,"_other_vars",".",file_path.split(".")[-1]])
@@ -492,6 +511,7 @@ class SimpleAgent(object):
         pk.dump(other_variables, open(sec_file_path, "wb"))
         
         print("Save Complete, Elapsed Time:{}s".format(time.time() - st))
+
     
     def load_mdp(self, file_path):
         if not path.exists(file_path):
@@ -501,18 +521,79 @@ class SimpleAgent(object):
             print("loading MDP, and learnt net")
             mdp_and_learnt_net = pk.load(open(file_path, "rb"))
             self.mdp_T, net_state_dict, pca = mdp_and_learnt_net
-            self.net.learnt_net.load_state_dict(net_state_dict)
-            self.net.learnt_net.pca = pca
-            self.net.learnt_net.pca_flag = True if pca is not None else False
-            
+            self.net.load_state_dict(net_state_dict)
+            self.net.pca = pca
+            self.net.pca_flag = True if pca is not None else False
+
             sec_file_path = "".join(["".join(file_path.split(".")[:-1]) ,"_other_vars",".",file_path.split(".")[-1]])
             if path.exists(sec_file_path):
                 other_variables =  pk.load(open(sec_file_path, "rb"))
                 self.dist_to_nn_cache = other_variables["dist_to_nn_cache"]
                 self.qvalDict_cache =  other_variables["qvalDict_cache"]
                 self.valueDict_cache =  other_variables["valueDict_cache"]
-            
+
             print("Load Complete, Elapsed Time: {}s".format(time.time() -st))
+
+    def cache_mdp(self, file_path):
+        st = time.time()
+        print("Saving MDP and learnt net, gentle reminder that the parameters might have changed, plese resolve the MDP after loading")
+
+        mdpCache_and_learnt_net = (self.mdp_cache, self.net.state_dict(),
+                              self.net.pca if hasattr(self.net, "pca") else None)
+        pk.dump(mdpCache_and_learnt_net, open(file_path, "wb"))
+
+        print("Save Complete, Elapsed Time:{}s".format(time.time() - st))
+
+    def load_mdp_from_cache(self, file_path):
+        if not path.exists(file_path):
+            print("File Does not Exist")
+        else:
+            st = time.time()
+            print("loading MDP, and learnt net")
+            mdp_and_learnt_net = pk.load(open(file_path, "rb"))
+            self.mdp_cache, net_state_dict, pca = mdp_and_learnt_net
+            self.net.load_state_dict(net_state_dict)
+            self.net.pca = pca
+            self.net.pca_flag = True if pca is not None else False
+
+            print("Load Complete, Elapsed Time: {}s".format(time.time() - st))
+
+            print("Building and solving Cache MDP")
+            self.build_mdp_from_cache(self.mdp_cache)
+            self.solve_mdp()
+
+    def build_mdp_from_cache(self, mdp_cache):
+        for s in tqdm(mdp_cache):
+            for a in mdp_cache[s]:
+                for ns in mdp_cache[s][a]:
+                    r = mdp_cache[s][a][ns].origReward
+                    dist_to_nn_s = mdp_cache[s][a][ns].dist
+                    if dist_to_nn_s == 0:
+                        self.mdp_T.consume_transition(cpy((s, a, ns, r, False)))
+
+        for s in tqdm(mdp_cache):
+            for a in mdp_cache[s]:
+                self.mdp_T.reset_counts_for_sa(s, a) # get rid of transistions to unknown states
+                for ns in mdp_cache[s][a]:
+                    r = mdp_cache[s][a][ns].origReward
+                    dist_to_nn_s = mdp_cache[s][a][ns].dist
+                    prob_ns = mdp_cache[s][a][ns].tranProb
+
+                    tran_count = max(1,int(prob_ns*100)) if self.normalize_by_distance else 1
+                    disc_reward = self.get_reward_logic(r, dist_to_nn_s, self.penalty_type, self.penalty_beta)
+                    reward_count = max(1,int(prob_ns*100)) * disc_reward if self.normalize_by_distance else disc_reward
+
+                    self.mdp_T.tC[s][a][ns] = tran_count
+                    self.mdp_T.rC[s][a][ns] = reward_count
+                try:
+                    self.mdp_T.filter_sa_count_for_max_ns_count(s, a)
+                    self.mdp_T.update_mdp_for(s, a)
+                except:
+                    print("Some Exception occred here")
+        self.mdp_T._update_nn_kd_tree()
+        self.mdp_T._update_nn_kd_with_action_tree()
+        print("Build Complete")
+
 
     def build_mdp(self, train_buffer, batch_parse=False):
         # print("Network being Used for pred:{}, reward:{},  terminal:{} over_Rid_threshold:{} [0 = False]" \
@@ -609,7 +690,7 @@ class SimpleAgent(object):
         cumulative_penalty = 0
 
         for i in range(max_episode_length):
-            a = self.mdp_T.get_opt_action(nn_z,smoothing = self.smoothing, soft_q = self.soft_q)
+            a = self.mdp_T.get_opt_action(nn_z,smoothing = self.smoothing, soft_q = self.soft_q, weigh_nn = self.normalize_by_distance)
             ns = random.choices(list(tD[s][a].keys()), weights= list(tD[s][a].values()), k = 1 )
             r = rD[s][a]
             cumulative_reward += 2
