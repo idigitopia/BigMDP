@@ -1,12 +1,9 @@
 import torch
-from collections import defaultdict,Iterable
 from PIL import Image, ImageFont, ImageDraw
 import numpy as np
-from bigmdp.utils.tmp_vi_helper import hAsh, unhAsh
-from statistics import mean, median
+from bigmdp.scraps.tmp_vi_helper import hAsh, unhAsh
 import cv2
 from torchvision.utils import make_grid
-import time
 
 
 def pad_image_with_one(img_arr, new_width):

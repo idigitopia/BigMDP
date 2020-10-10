@@ -3,7 +3,7 @@ from gym_minigrid.wrappers import FullyObsWrapper
 from enum import IntEnum
 from gym import error, spaces, utils
 from collections.abc import Iterable
-from bigmdp.data.dataset import SimpleReplayBuffer
+from bigmdp.data.buffer import SimpleReplayBuffer
 from matplotlib import pyplot as plt
 import numpy as np
 import logging

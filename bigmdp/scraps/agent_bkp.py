@@ -1,12 +1,17 @@
 """ Quick script for an "Episodic Controller" Agent, i.e. nearest neighbor """
-from bigmdp.data.dataset import *
-from bigmdp.utils.tmp_vi_helper import *
-from bigmdp.xai_module.rollout_visualizer import *
+from bigmdp.data.buffer import *
+from collections import defaultdict
+# from bigmdp.utils.tmp_vi_helper import *
+# from bigmdp.xai_module.rollout_visualizer import *
 from sklearn.neighbors import KDTree
-import plotly.graph_objects as go
+# import plotly.graph_objects as go
 import collections
 from collections import namedtuple
-
+from bigmdp.data.buffer import get_iter_indexes
+from tqdm import tqdm
+from copy import deepcopy as cpy
+import math
+import random
 # from wrappers import *
 MDPUnit = namedtuple('MDPUnit', 'tranProb origReward dist')
 
@@ -115,8 +120,14 @@ class SimpleAgent(object):
         return self.mdp_T.get_safe_action(self.net.encode_single(obs), smoothing=self.smoothing, soft_q=self.soft_q, weight_nn=self.normalize_by_distance)
 
     def eps_optimal_policy(self, obs):
-        eps_opt_pol = get_eps_policy(self.opt_policy, self.random_policy, epsilon=0.1)
+        eps_opt_pol = self.get_eps_policy(self.opt_policy, self.random_policy, epsilon=0.1)
         return eps_opt_pol(obs)
+
+    def get_eps_policy(self,greedy_policy, random_policy, epsilon=0.1):
+        """
+        returns a exploration exploitation policy based on epsilon , greedy and random policy
+        """
+        return lambda s: random_policy(s) if (np.random.rand() < epsilon) else greedy_policy(s)
 
     def random_policy(self, obs):
         return random.choice(self.mdp_T.A)
@@ -718,13 +729,9 @@ def bruteForce_nn(search_list, query, return_nn =True):
     else:
         return dist_dict
 
-import math
 
 def get_eucledian_dist(s1, s2):
     return math.sqrt( sum( [ (s1[i]-s2[i])**2 for i, _ in enumerate(s1)] ))
-    # s1,s2 = torch.FloatTensor(list(s1)), torch.FloatTensor(list(s2))
-    # return torch.dist(s1,s2).item()
-
 
 
 def ensemble_agent(list_of_agent):

@@ -3,3 +3,5 @@ examples/logs/*
 examples/results/*
 examples/result_dump/*
 bigmdp.egg-info
+*__pycache__*
+~

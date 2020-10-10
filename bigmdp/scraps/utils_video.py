@@ -1,15 +1,10 @@
 import os
-from collections import deque
 
 import cv2
-from matplotlib.backends.backend_agg import FigureCanvasAgg
-from sklearn.metrics import mean_squared_error
 # from plotly.graph_objs import Scatter
 from torchvision.utils import make_grid
-import numpy as np
 import torch
-import matplotlib.pyplot as plt
-from bigmdp.utils.tmp_vi_helper import *
+from bigmdp.scraps.tmp_vi_helper import *
 import math
 
 

@@ -1,54 +1,36 @@
-import torch
+from pycuda import compiler, gpuarray
 from collections import defaultdict
-from collections import deque
-import math
-import numpy as np
-from pycuda import driver, compiler, gpuarray, tools
-import pycuda.driver as cuda
-from pycuda.compiler import SourceModule
-from collections import defaultdict
-from pycuda.reduction import ReductionKernel
-import numpy
 import time
 import math as mth
-from bigmdp.utils.kernel_templates import complex_vi_kernel_code_template as vi_kernel_template
-from bigmdp.utils.kernel_templates import NN_kernel_code_template
-import pycuda
-# -- initialize the device
-from statistics import mean
-from bigmdp.utils.tmp_vi_helper import *
+from bigmdp.mdp.kernels import complex_vi_kernel_code_template as vi_kernel_template
 import numpy as np
 from tqdm import tqdm
-import pycuda.autoinit
-from collections import namedtuple
 from copy import deepcopy as cpy
-from collections import Counter, deque
+from collections import deque
 import random
-from bigmdp.utils.tmp_vi_helper import *
-from bisect import bisect
 from sklearn.neighbors import KDTree
 from collections import Counter
-from heapq import nsmallest, nlargest
+import pycuda.autoinit
 
 
 def init2dict():
     return {}
 
-
 def init2list():
     return []
-
 
 def init2zero():
     return 0
 
-
 def init2zero_def_dict():
     return defaultdict(init2zero)
 
-
 def init2zero_def_def_dict():
     return defaultdict(init2zero_def_dict)
+
+
+
+
 
 
 class FullMDP(object):
