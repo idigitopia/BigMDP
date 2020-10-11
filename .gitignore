@@ -1,8 +1,8 @@
-.idea*
+.idea
 examples/logs/*
 examples/results/*
 examples/result_dump/*
-bigmdp.egg*
+bigmdp.egg-info
 *__pycache__*
 scraps
 *.ipy*

@@ -1,7 +1,7 @@
 # Big MDP
 
 Library for building, solving and visualizing large Markov Decision processes. [Under development] 
-refer to examples/decimaltest for basic usage
+refer to examples/cartpole for basic usage
 
 # Installation 
 
