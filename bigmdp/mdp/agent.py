@@ -234,8 +234,8 @@ class SimpleAgent(object):
             batch = train_buffer.sample_indices(list(range(start_i, end_i)))
             batch_ob, batch_a, batch_ob_prime, batch_r, batch_nd = batch
             batch_d = 1 - batch_nd
-            self.batch_parse(batch_ob.numpy(), batch_a.numpy().squeeze(), batch_ob_prime.numpy(),
-                             batch_r.numpy().squeeze(), batch_d.numpy().squeeze())
+            self.batch_parse(batch_ob.numpy(), batch_a.view((-1,)).numpy(), batch_ob_prime.numpy(),
+                             batch_r.view((-1,)).numpy(), batch_d.view((-1,)).numpy())
 
         if verbose: print("Step 1 [Parse Transitions]:  Complete,  Time Elapsed: {}\n\n".format(time.time() - st))
         if verbose: print("Step 2 [Seed Seen Transitions + Unknown (s,a) pairs]:  Running")
