@@ -182,6 +182,9 @@ class FullMDP(object):
                         self.tD[s][a][ns] = self.tranProbMatrix_cpu[a_i, s_i, ns_slot]
                         self.rD[s][a][ns] = self.rewardMatrix_cpu[a_i, s_i, ns_slot]
 
+    def __len__(self):
+        return np.sum(self.filled_mask)
+
     @property
     def missing_state_action_count(self):
         return sum([1 for s in self.rD for a in self.rD[s] if self.ur == self.rD[s][a]])
