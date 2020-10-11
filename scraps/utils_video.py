@@ -4,7 +4,7 @@ import cv2
 # from plotly.graph_objs import Scatter
 from torchvision.utils import make_grid
 import torch
-from bigmdp.scraps.tmp_vi_helper import *
+from scraps.tmp_vi_helper import *
 import math
 
 

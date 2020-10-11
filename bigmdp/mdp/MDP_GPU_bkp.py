@@ -16,21 +16,21 @@ import pycuda.autoinit
 def init2dict():
     return {}
 
+
 def init2list():
     return []
+
 
 def init2zero():
     return 0
 
+
 def init2zero_def_dict():
     return defaultdict(init2zero)
 
+
 def init2zero_def_def_dict():
     return defaultdict(init2zero_def_dict)
-
-
-
-
 
 
 class FullMDP(object):
@@ -40,15 +40,15 @@ class FullMDP(object):
                             "rmax_reward": 1000,
                             "rmax_thres": 10,
                             "balanced_explr": False,
-                             "rmin":-1000},
-                 mdp_params={"weight_transitions":True,
-                            "mdp_build_k":10,
-                             "plcy_lift_k":10,
-                            "knn_delta" : 0.01,
-                            "calc_action_vector":True,
-                            "penalty_beta":1},
+                            "rmin": -1000},
+                 mdp_params={"weight_transitions": True,
+                             "mdp_build_k": 10,
+                             "plcy_lift_k": 10,
+                             "knn_delta": 0.01,
+                             "calc_action_vector": True,
+                             "penalty_beta": 1},
                  default_mode="GPU",
-                 smooth_with_seen = True):
+                 smooth_with_seen=True):
 
         """
         :param A: Action Space of the MDP
@@ -58,8 +58,8 @@ class FullMDP(object):
         self.penalty_beta = mdp_params["penalty_beta"]
         self.smooth_with_seen = smooth_with_seen
 
-        self.fill_engine_time = deque(maxlen = 100)
-        self.unknown_sa_fill_time_list = deque(maxlen = 100)
+        self.fill_engine_time = deque(maxlen=100)
+        self.unknown_sa_fill_time_list = deque(maxlen=100)
 
         self.to_commit_sa_dict = {}
         self.known_sa_dict = {}
@@ -70,10 +70,8 @@ class FullMDP(object):
         self.known_sa_list = []
         self.factored_known_sa_list = []
 
-
         self.penalize_uncertainity = mdp_params["penalize_unknown_transitions"]
         self.calc_action_vector = mdp_params["calc_action_vector"]
-
 
         self.consumption_count = 0
         self.mdp_build_k = mdp_params["mdp_build_k"]
@@ -85,7 +83,6 @@ class FullMDP(object):
         # KNN Params
         self.known_tC = defaultdict(init2zero_def_def_dict)
         self.known_rC = defaultdict(init2zero_def_def_dict)
-
 
         # VI CPU/GPU parameters
         self.vi_params = vi_params
@@ -117,22 +114,25 @@ class FullMDP(object):
         self.rewardMatrix_cpu = np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32')
 
         # self.tranCountMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
-        self.tranProbMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
-        self.tranidxMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
-        self.rewardMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
+        self.tranProbMatrix_gpu = gpuarray.to_gpu(
+            np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
+        self.tranidxMatrix_gpu = gpuarray.to_gpu(
+            np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
+        self.rewardMatrix_gpu = gpuarray.to_gpu(
+            np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
 
         # Optimal Policy GPU parameters
-        self.vD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, 1)).astype('float32')) # value vector in gpu
-        self.qD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, len(self.A))).astype('float32')) # q matrix in gpu
+        self.vD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, 1)).astype('float32'))  # value vector in gpu
+        self.qD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, len(self.A))).astype('float32'))  # q matrix in gpu
         self.vD_cpu = np.zeros((self.MAX_S_COUNT, 1)).astype('float32')
         self.qD_cpu = np.zeros((self.MAX_S_COUNT, len(self.A))).astype('float32')
         self.gpu_backup_counter = 0
 
-
         # Exploration Policy GPU parameters
         self.e_vD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, 1)).astype('float32'))
         self.e_qD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S_COUNT, len(self.A))).astype('float32'))
-        self.e_rewardMatrix_gpu = gpuarray.to_gpu(np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
+        self.e_rewardMatrix_gpu = gpuarray.to_gpu(
+            np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32'))
         self.e_vD_cpu = np.zeros((self.MAX_S_COUNT, 1)).astype('float32')
         self.e_qD_cpu = np.zeros((self.MAX_S_COUNT, len(self.A))).astype('float32')
         self.e_rewardMatrix_cpu = np.zeros((len(self.A), self.MAX_S_COUNT, self.MAX_NS_COUNT)).astype('float32')
@@ -181,11 +181,11 @@ class FullMDP(object):
 
     @property
     def total_state_action_count(self):
-        return len(self.tD)*len(self.A)
+        return len(self.tD) * len(self.A)
 
     @property
     def missing_state_action_percentage(self):
-        return round(self.missing_state_action_count/self.total_state_action_count, 4)
+        return round(self.missing_state_action_count / self.total_state_action_count, 4)
 
     @property
     def rmax_state_action_count(self):
@@ -193,7 +193,7 @@ class FullMDP(object):
 
     @property
     def valueDict(self):
-        return {s:float(self.vD_cpu[i]) for s,i in self.s2idx.items()}
+        return {s: float(self.vD_cpu[i]) for s, i in self.s2idx.items()}
 
     @property
     def s_valueDict(self):
@@ -201,7 +201,7 @@ class FullMDP(object):
 
     @property
     def qvalDict(self):
-        return {s: {a:self.qD_cpu[i][j] for a,j in self.a2idx.items()} for s, i in self.s2idx.items()}
+        return {s: {a: self.qD_cpu[i][j] for a, j in self.a2idx.items()} for s, i in self.s2idx.items()}
 
     @property
     def s_qvalDict(self):
@@ -220,6 +220,7 @@ class FullMDP(object):
     @property
     def is_kd_tree_initialized(self):
         return self.KDTree is not None and None not in self.KDActionTrees.values()
+
     def _initialize_end_and_unknown_state(self):
         """
         Initializes the MDP With "end_state" and a "unknown_state"
@@ -239,12 +240,12 @@ class FullMDP(object):
         #         self.update_state_indexes()
 
         for ns_ in self.tC[s][a]:
-            self.tD[s][a][ns_] = self.tC[s][a][ns_] / sum(self.tC[s][a].values()) if self.weight_transitions else 1 / len(self.tC[s][a])
+            self.tD[s][a][ns_] = self.tC[s][a][ns_] / sum(
+                self.tC[s][a].values()) if self.weight_transitions else 1 / len(self.tC[s][a])
             self.rD[s][a] = sum(self.rC[s][a].values()) / sum(self.tC[s][a].values())
             # self.rd[s][a][ns_] = self.rc[s][a][ns_] / sum(self.tc[s][a][ns_])  # for state action nextstate
 
-        self.update_mdp_matrix_at_cpu_for(s,a)
-
+        self.update_mdp_matrix_at_cpu_for(s, a)
 
     def contraction_operation(self):
         # get top 20 nearset for all states.
@@ -252,28 +253,27 @@ class FullMDP(object):
         # make a list of top 20 state
         return
 
-    def hash_state_action(self,s,a):
-        return tuple([s,a])
+    def hash_state_action(self, s, a):
+        return tuple([s, a])
 
-    def unhash_state_action(self,sa):
-        s,a = sa
+    def unhash_state_action(self, sa):
+        s, a = sa
         return s, a
 
-    def get_kernel_probs(self, knn_dist_dict, delta =None):
-        #todo Add a choice to do exponential averaging here.
+    def get_kernel_probs(self, knn_dist_dict, delta=None):
+        # todo Add a choice to do exponential averaging here.
         delta = delta or self.knn_delta
         all_knn_kernels = {nn: 1 / (dist + delta) for nn, dist in knn_dist_dict.items()}
         all_knn_probs = {nn: knn_kernel / sum(all_knn_kernels.values()) for nn, knn_kernel in all_knn_kernels.items()}
         return all_knn_probs
 
-
-    def fill_knn_for_all_sa_pairs(self, within_radius = None):
+    def fill_knn_for_all_sa_pairs(self, within_radius=None):
         """
         :param use_cache:  Generaly put false because we will cache things using this
         :param just_known:
         :return:
         """
-        to_update_sa_pairs = [(s,a) for s in self.tC for a in self.A if s not in self.omit_list]
+        to_update_sa_pairs = [(s, a) for s in self.tC for a in self.A if s not in self.omit_list]
 
         for s, a in tqdm(to_update_sa_pairs):
             self.fill_knn_for_s_a(s, a, within_radius=within_radius)
@@ -298,8 +298,7 @@ class FullMDP(object):
     #             for ns in self.tD[hs][a]:
     #                 self.consume_transition((hs,a,ns,r,d))
 
-
-    def fill_knn_for_s_a(self, s, a, k=None, within_radius = None):
+    def fill_knn_for_s_a(self, s, a, k=None, within_radius=None):
         # Switch to default params if not provided
         k = k or self.mdp_build_k
 
@@ -311,7 +310,7 @@ class FullMDP(object):
         # Define and trim nn dict with distances,
         hsa = self.hash_state_action(s, a)
         knn_hsa = self._get_knn_hs_kd_with_action_tree(hsa, k=k)
-        if within_radius is not None and min(knn_hsa.values()) > within_radius :
+        if within_radius is not None and min(knn_hsa.values()) > within_radius:
             return
 
         # first Calculate R(s,a)
@@ -328,18 +327,16 @@ class FullMDP(object):
         if self.calc_action_vector:
             self.process_knn_dict_from_action_vectors(knn_hsa, s, a, approx_reward)
         else:
-            self.process_knn_dict_from_states(knn_hsa,s,a, approx_reward)
-
+            self.process_knn_dict_from_states(knn_hsa, s, a, approx_reward)
 
     def fill_fully_unknown_states(self):
         for s in tqdm(self._fully_unknown_states):
             for a in self.A:
-                self.fill_knn_for_s_a(s,a)
+                self.fill_knn_for_s_a(s, a)
 
-
-    def process_knn_dict_from_action_vectors(self, knn_hsa ,s, a, approx_reward):
+    def process_knn_dict_from_action_vectors(self, knn_hsa, s, a, approx_reward):
         # reset counter and remember transition reward
-        self.reset_counts_for_sa(s,a)
+        self.reset_counts_for_sa(s, a)
 
         action_vec_list, end_state_transition = [], False
         for hsa in knn_hsa:
@@ -350,9 +347,9 @@ class FullMDP(object):
                     end_state_transition = True
 
         if not end_state_transition:
-            avg_action_vec = np.mean(action_vec_list, axis=0)  #if weighted_mean else np.mean(action_vec_list, axis=0)
+            avg_action_vec = np.mean(action_vec_list, axis=0)  # if weighted_mean else np.mean(action_vec_list, axis=0)
             approx_ns = np.array(s) + avg_action_vec
-            knn_hs = self._get_knn_hs_kdtree(tuple(approx_ns.squeeze()), k = self.mdp_build_k)
+            knn_hs = self._get_knn_hs_kdtree(tuple(approx_ns.squeeze()), k=self.mdp_build_k)
             all_knn_probs = self.get_kernel_probs(knn_hs, delta=self.knn_delta)
 
             if self.penalize_uncertainity:
@@ -361,10 +358,7 @@ class FullMDP(object):
 
             # add respective counts
             for hs_, prob in all_knn_probs.items():
-                if prob >0.01:
-                    
-                    
-                    
+                if prob > 0.01:
                     self.tC[s][a][hs_] += int(prob * 100)
                     self.rC[s][a][hs_] += int(prob * 100) * approx_reward
 
@@ -372,48 +366,45 @@ class FullMDP(object):
             self.tC[s][a]["end_state"] = 1
             self.rC[s][a]["end_state"] = approx_reward
 
-        self.filter_sa_count_for_max_ns_count(s,a)
+        self.filter_sa_count_for_max_ns_count(s, a)
 
         # update the probability ditribution
         self.update_mdp_for(s, a)
 
         assert 1.1 > sum(self.tD[s][a].values()) > 0.9
 
-
-    def process_knn_dict_from_states(self, knn_hsa ,s, a,approx_reward):
-        knn_hs = {self.unhash_state_action(hsa)[0]:dist for hsa, dist in knn_hsa.items()}
+    def process_knn_dict_from_states(self, knn_hsa, s, a, approx_reward):
+        knn_hs = {self.unhash_state_action(hsa)[0]: dist for hsa, dist in knn_hsa.items()}
         all_knn_probs = self.get_kernel_probs(knn_hs, delta=self.knn_delta)
 
         # reset counter and remember transition reward
-        self.reset_counts_for_sa(s,a)
+        self.reset_counts_for_sa(s, a)
 
         # add respective counts
         for hs_, prob in all_knn_probs.items():
-            assert  len(self.known_tC[hs_][a]) != 0
+            assert len(self.known_tC[hs_][a]) != 0
             for ns in self.known_tC[hs_][a]:
-                if prob >0.01:
-                    self.tC[s][a][ns] += int( prob * 100 * self.known_tC[hs_][a][ns])
-                    self.rC[s][a][ns] += int( prob * 100) * approx_reward
+                if prob > 0.01:
+                    self.tC[s][a][ns] += int(prob * 100 * self.known_tC[hs_][a][ns])
+                    self.rC[s][a][ns] += int(prob * 100) * approx_reward
 
-        self.filter_sa_count_for_max_ns_count(s,a)
+        self.filter_sa_count_for_max_ns_count(s, a)
 
         # update the probability ditribution
         self.update_mdp_for(s, a)
 
         assert 1.1 > sum(self.tD[s][a].values()) > 0.9
 
-
-    def filter_sa_count_for_max_ns_count(self,s,a):
+    def filter_sa_count_for_max_ns_count(self, s, a):
         # If the branching factor is too large remove the least occuring transition #Todo Set this as parameter
         while len(self.tC[s][a]) > self.MAX_NS_COUNT:
             self.delete_tran_from_counts(s, a, min(self.tC[s][a], key=self.tC[s][a].get))
 
-    def reset_counts_for_sa(self,s,a):
+    def reset_counts_for_sa(self, s, a):
         self.tC[s][a] = init2zero_def_dict()
         self.rC[s][a] = init2zero_def_dict()
 
-
-    def sync_mdp_from_cpu_to_gpu(self,):
+    def sync_mdp_from_cpu_to_gpu(self, ):
         # self.tranCountMatrix_gpu.gpudata.free()
         try:
             self.tranProbMatrix_gpu.gpudata.free()
@@ -429,19 +420,21 @@ class FullMDP(object):
         self.rewardMatrix_gpu = gpuarray.to_gpu(self.rewardMatrix_cpu)
         self.e_rewardMatrix_gpu = gpuarray.to_gpu(self.e_rewardMatrix_cpu)
 
-
     def update_mdp_matrix_at_cpu_for(self, s, a):
         """
         updates GPU matrix for particular state action
         """
         for i, a in [(self.a2idx[a], a)]:
             for j, s in [(self.s2idx[s], s)]:
-                self.tranProbMatrix_cpu[i][j] = np.array([self.tD[s][a][ns] for ns in self.tD[s][a]] + [0] * (self.MAX_NS_COUNT - len(self.tD[s][a]))).astype("float32")
-                self.tranidxMatrix_cpu[i][j] = np.array([self.s2idx[ns] for ns in self.tD[s][a]] + [self.s2idx["unknown_state"]] * (self.MAX_NS_COUNT - len(self.tD[s][a]))).astype("float32")
+                self.tranProbMatrix_cpu[i][j] = np.array([self.tD[s][a][ns] for ns in self.tD[s][a]] + [0] * (
+                            self.MAX_NS_COUNT - len(self.tD[s][a]))).astype("float32")
+                self.tranidxMatrix_cpu[i][j] = np.array(
+                    [self.s2idx[ns] for ns in self.tD[s][a]] + [self.s2idx["unknown_state"]] * (
+                                self.MAX_NS_COUNT - len(self.tD[s][a]))).astype("float32")
                 self.rewardMatrix_cpu[i][j] = np.array([self.rD[s][a]] * self.MAX_NS_COUNT).astype("float32")
-                self.e_rewardMatrix_cpu[i][j] = np.array([self.get_rmax_reward_logic(s, a)] * self.MAX_NS_COUNT).astype("float32")
+                self.e_rewardMatrix_cpu[i][j] = np.array([self.get_rmax_reward_logic(s, a)] * self.MAX_NS_COUNT).astype(
+                    "float32")
                 assert len(self.tranProbMatrix_cpu[i][j]) == len(self.tranidxMatrix_cpu[i][j])
-
 
     def seed_for_new_state(self, s):
         """
@@ -450,13 +443,13 @@ class FullMDP(object):
         """
 
         if s not in self.tC:
-            self._fully_unknown_states[s]=1
+            self._fully_unknown_states[s] = 1
             curr_idx = len(self.tC)
             self.s2idx[s] = curr_idx
             self.idx2s[curr_idx] = s
 
-            #check if current index is bigger than the capacity of the Transition Buffer
-            u_ns = "end_state" if s ==  "end_state" else "unknown_state"
+            # check if current index is bigger than the capacity of the Transition Buffer
+            u_ns = "end_state" if s == "end_state" else "unknown_state"
             ur = 0 if s in self.omit_list else self.ur
             for a in self.A:
                 if a not in self.tC[s]:
@@ -467,7 +460,6 @@ class FullMDP(object):
                 # Fill unknown logic
                 if s not in self.omit_list:
                     self.unknown_sa_dict[self.hash_state_action(s, a)] = 1
-
 
     def delete_tran_from_counts(self, s, a, ns):
         """
@@ -484,10 +476,9 @@ class FullMDP(object):
         assert len(tran) == 5
         assert len(tran) == 5
 
-
         s, a, ns, r, d = tran
         ns = "end_state" if d else ns
-        
+
         if s not in self.omit_list:
             self.known_tC[s][a][ns] += 1
             self.known_rC[s][a][ns] += r
@@ -497,8 +488,8 @@ class FullMDP(object):
         self.seed_for_new_state(ns)
 
         # set to_commit stage
-        for s_,a_ in [(s_,a_) for s_ in [s,ns] for a_ in self.A if s_ not in self.omit_list]:
-            self.to_commit_sa_dict[self.hash_state_action(s_,a_)] = 1
+        for s_, a_ in [(s_, a_) for s_ in [s, ns] for a_ in self.A if s_ not in self.omit_list]:
+            self.to_commit_sa_dict[self.hash_state_action(s_, a_)] = 1
 
         # delete seeded transition once an actual state action set is encountered
         self.delete_tran_from_counts(s, a, "unknown_state")
@@ -506,16 +497,15 @@ class FullMDP(object):
 
         if s not in self.omit_list:
             self.unknown_sa_dict.pop(self.hash_state_action(s, a), None)
-            self.known_sa_dict[self.hash_state_action(s,a)] = 1
+            self.known_sa_dict[self.hash_state_action(s, a)] = 1
 
         self.tC[s][a][ns] += 1
         self.rC[s][a][ns] += r
 
         self.filter_sa_count_for_max_ns_count(s, a)
-        self.update_mdp_for(s,a)
+        self.update_mdp_for(s, a)
 
-
-    def fill_knn_from_to_commit_dict(self, update_kd_trees = True):
+    def fill_knn_from_to_commit_dict(self, update_kd_trees=True):
         if update_kd_trees:
             st = time.time()
             self._update_nn_kd_tree()
@@ -524,7 +514,7 @@ class FullMDP(object):
             self.fill_engine_time.append(et - st)
 
         for hsa in tqdm(self.to_commit_sa_dict):
-            s,a = self.unhash_state_action(hsa)
+            s, a = self.unhash_state_action(hsa)
             self.fill_knn_for_s_a(s, a, False)
 
         assert self.unknown_state_action_count == 0
@@ -534,7 +524,7 @@ class FullMDP(object):
         # get the sum of distances for k nearest neighbor
         # pick the top 10%
         # set all unknwon sa for this s as rmax  actions as rmax.
-        return 0 #todo add some logic here
+        return 0  # todo add some logic here
 
         # if not self.known_sa_list:
         #     return 0
@@ -580,18 +570,17 @@ class FullMDP(object):
         self.s_vD_cpu = tmp_s_vD_cpu
         self.s_qD_cpu = tmp_s_qD_cpu
 
-
     def convert_matrix_to_dicts(self):
         assert False
 
-
     def do_backup(self, mode, module, n_backups):
         bkp_fxn_dict = {"optimal": {"CPU": self.opt_bellman_backup_step_cpu, "GPU": self.opt_bellman_backup_step_gpu},
-                "safe": {"CPU": self.safe_bellman_backup_step_cpu, "GPU": self.safe_bellman_backup_step_gpu},
-                "exploration": {"CPU": self.explr_bellman_backup_step_cpu,"GPU": self.explr_bellman_backup_step_gpu}}
-        sync_fxn_dict= {"optimal": {"GPU": self.sync_opt_val_vectors_from_GPU},
-                "safe": {"GPU": self.sync_safe_val_vectors_from_GPU},
-                "exploration": {"GPU": self.sync_explr_val_vectors_from_GPU}}
+                        "safe": {"CPU": self.safe_bellman_backup_step_cpu, "GPU": self.safe_bellman_backup_step_gpu},
+                        "exploration": {"CPU": self.explr_bellman_backup_step_cpu,
+                                        "GPU": self.explr_bellman_backup_step_gpu}}
+        sync_fxn_dict = {"optimal": {"GPU": self.sync_opt_val_vectors_from_GPU},
+                         "safe": {"GPU": self.sync_safe_val_vectors_from_GPU},
+                         "exploration": {"GPU": self.sync_explr_val_vectors_from_GPU}}
 
         if mode == "CPU":
             for _ in range(n_backups):
@@ -614,47 +603,47 @@ class FullMDP(object):
     def do_explr_backup(self, mode="CPU", n_backups=1):
         self.do_backup(mode=mode, module="exploration", n_backups=n_backups)
 
-
-
-
     #### Policy Functions ####
-    def sample_action_from_qval_dict(self,qval_dict):
+    def sample_action_from_qval_dict(self, qval_dict):
         return random.choices(list(qval_dict.keys()), list(qval_dict.values()), k=1)[0]
 
-    def get_action_from_q_matrix(self, hs, qMatrix, smoothing = False, soft_q = False, weight_nn = False):
+    def get_action_from_q_matrix(self, hs, qMatrix, smoothing=False, soft_q=False, weight_nn=False):
         if smoothing:
             if self.smooth_with_seen:
                 qval_dict = {}
                 for a in self.A:
                     knn_hsa = self._get_knn_hs_kd_with_action_tree(self.hash_state_action(hs, a), k=self.plcy_lift_k)
-                    qval_a = np.mean([qMatrix[self.s2idx[nn_hs]][self.a2idx[a_]] for nn_hs , a_ in knn_hsa])
-                    qval_dict[a] =  qval_a
+                    qval_a = np.mean([qMatrix[self.s2idx[nn_hs]][self.a2idx[a_]] for nn_hs, a_ in knn_hsa])
+                    qval_dict[a] = qval_a
             else:
                 knn_hs = self._get_knn_hs_kdtree(hs, k=self.plcy_lift_k)
                 if weight_nn:
                     knn_hs_normalized = self.get_kernel_probs(knn_hs, delta=self.knn_delta)
-                    all_qval_dict = [{self.idx2a[i]: qval*norm_dist for i, qval in enumerate(qMatrix[self.s2idx[nn_hs]])} for nn_hs, norm_dist in knn_hs_normalized.items()]
-                    qval_dict = {a:np.sum([_qval_dict[a] for _qval_dict in all_qval_dict]) for a in self.A}
+                    all_qval_dict = [
+                        {self.idx2a[i]: qval * norm_dist for i, qval in enumerate(qMatrix[self.s2idx[nn_hs]])} for
+                        nn_hs, norm_dist in knn_hs_normalized.items()]
+                    qval_dict = {a: np.sum([_qval_dict[a] for _qval_dict in all_qval_dict]) for a in self.A}
                 else:
-                    all_qval_dict = [{self.idx2a[i]: qval for i, qval in enumerate(qMatrix[self.s2idx[nn_hs]])} for nn_hs in knn_hs]
+                    all_qval_dict = [{self.idx2a[i]: qval for i, qval in enumerate(qMatrix[self.s2idx[nn_hs]])} for
+                                     nn_hs in knn_hs]
                     qval_dict = {a: np.mean([_qval_dict[a] for _qval_dict in all_qval_dict]) for a in self.A}
 
         else:
             nn_hs = self._get_nn_hs_kdtree(hs)
-            qval_dict = {self.idx2a[i]:qval for i, qval in enumerate(qMatrix[self.s2idx[nn_hs]])}
+            qval_dict = {self.idx2a[i]: qval for i, qval in enumerate(qMatrix[self.s2idx[nn_hs]])}
 
         if soft_q:
             return self.sample_action_from_qval_dict(qval_dict)
         else:
             return max(qval_dict, key=qval_dict.get)
 
-    def get_opt_action(self, hs ,smoothing = False, soft_q = False, weight_nn = False):
-        return self.get_action_from_q_matrix(hs,self.qD_cpu, smoothing=smoothing, soft_q=soft_q, weight_nn=weight_nn)
+    def get_opt_action(self, hs, smoothing=False, soft_q=False, weight_nn=False):
+        return self.get_action_from_q_matrix(hs, self.qD_cpu, smoothing=smoothing, soft_q=soft_q, weight_nn=weight_nn)
 
-    def get_safe_action(self, hs, smoothing = False, soft_q = False, weight_nn = False):
-        return self.get_action_from_q_matrix(hs,self.s_qD_cpu,  smoothing=smoothing, soft_q=soft_q, weight_nn=weight_nn)
+    def get_safe_action(self, hs, smoothing=False, soft_q=False, weight_nn=False):
+        return self.get_action_from_q_matrix(hs, self.s_qD_cpu, smoothing=smoothing, soft_q=soft_q, weight_nn=weight_nn)
 
-    def get_explr_action(self, hs, smoothing = False, soft_q = False, weight_nn = False):
+    def get_explr_action(self, hs, smoothing=False, soft_q=False, weight_nn=False):
         return self.get_action_from_q_matrix(hs, self.e_qD_cpu, smoothing=smoothing, soft_q=soft_q, weight_nn=weight_nn)
 
     def get_state_count(self):
@@ -677,22 +666,23 @@ class FullMDP(object):
             a: [self.unhash_state_action(hsa)[0] for hsa in self.known_sa_list if self.unhash_state_action(hsa)[1] == a]
             for a in self.A}
 
-        self.KDActionTrees = {a: KDTree(np.array(st_list), leaf_size=40) for a, st_list in self.factored_known_sa_list.items()}
+        self.KDActionTrees = {a: KDTree(np.array(st_list), leaf_size=40) for a, st_list in
+                              self.factored_known_sa_list.items()}
 
-    def _get_nn_hs_kd_with_action_tree(self, hsa ):
+    def _get_nn_hs_kd_with_action_tree(self, hsa):
         hs, a = self.unhash_state_action(hsa)
         if hs in self.omit_list:
             return hsa
 
         nn_dist, nn_idx = self.KDActionTrees[a].query(np.array([hs]), k=1)
         nearest_neighbor_hs = self.factored_known_sa_list[a][int(nn_idx.squeeze())]
-        nearest_neighbor_hsa = self.hash_state_action(nearest_neighbor_hs,a)
+        nearest_neighbor_hsa = self.hash_state_action(nearest_neighbor_hs, a)
         return nearest_neighbor_hsa
 
-    def _get_knn_hs_kd_with_action_tree(self, hsa,k):
+    def _get_knn_hs_kd_with_action_tree(self, hsa, k):
         hs, a = self.unhash_state_action(hsa)
         if hs in self.omit_list or not self.factored_known_sa_list:
-            return {hsa:0}
+            return {hsa: 0}
 
         nn_dist, nn_idx = self.KDActionTrees[a].query(np.array([hs]), k=k)
         nn_dist, nn_idx = nn_dist.reshape(-1), nn_idx.reshape(-1)
@@ -700,7 +690,7 @@ class FullMDP(object):
                    for i, idx in enumerate(nn_idx)}
         return nn_dict
 
-    def _get_nn_hs_kdtree(self, hs, return_dist = False):
+    def _get_nn_hs_kdtree(self, hs, return_dist=False):
         nn_hs, nn_dist = list(self._get_knn_hs_kdtree(hs, k=1).items())[0]
         if return_dist:
             return nn_hs, nn_dist
@@ -709,24 +699,22 @@ class FullMDP(object):
 
     def _get_knn_hs_kdtree(self, hs, k):
         if hs in self.omit_list or not self.state_list:
-            return {hs:0}
+            return {hs: 0}
 
         nn_dist, nn_idx = self.KDTree.query(np.array([hs]), k=k)
         nn_dist, nn_idx = nn_dist.reshape(-1), nn_idx.reshape(-1)
         nn_dict = {self.state_list[int(idx)]: nn_dist[i] for i, idx in enumerate(nn_idx)}
         return nn_dict
 
-
     def _get_radial_nn_hs_kdtree(self, hs, radius):
         nn_idxs, dist = self.KDTree.query_radius(np.array([hs]), r=radius,
-                                                       return_distance=True, sort_results=True)
+                                                 return_distance=True, sort_results=True)
         nn_idxs, dist = nn_idxs[0], dist[0]
-        nn_dict = {self.state_list[indx]:dist[i] for i , indx in enumerate(nn_idxs)}
+        nn_dict = {self.state_list[indx]: dist[i] for i, indx in enumerate(nn_idxs)}
 
         return nn_dict
 
-
-    def solve(self, eps = 1e-5, mode = None, safe_bkp = False, explr_bkp = False, verbose = True):
+    def solve(self, eps=1e-5, mode=None, safe_bkp=False, explr_bkp=False, verbose=True):
         mode = mode or self.default_mode
 
         st = time.time()
@@ -734,21 +722,22 @@ class FullMDP(object):
         while self.curr_vi_error > eps:
             self.do_optimal_backup(mode=mode, n_backups=250)
             if safe_bkp:
-                self.do_safe_backup(mode = mode, n_backups=250)
+                self.do_safe_backup(mode=mode, n_backups=250)
             if explr_bkp:
-                self.do_explr_backup(mode = mode, n_backups=250)
+                self.do_explr_backup(mode=mode, n_backups=250)
 
-            if self.curr_vi_error < curr_error/10 and verbose:
-                print("Elapsed Time:{}s, VI Error:{}, #Backups: {}".format(int(time.time()-st), round(self.curr_vi_error,8), self.gpu_backup_counter))
+            if self.curr_vi_error < curr_error / 10 and verbose:
+                print("Elapsed Time:{}s, VI Error:{}, #Backups: {}".format(int(time.time() - st),
+                                                                           round(self.curr_vi_error, 8),
+                                                                           self.gpu_backup_counter))
                 curr_error = self.curr_vi_error
         et = time.time()
-        print("Time takedn to solve",et-st)
-
+        print("Time takedn to solve", et - st)
 
     @property
-    def  qval_distribution(self):
+    def qval_distribution(self):
         qvalDict = cpy(self.qvalDict)
-        return [qsa for qs in  qvalDict for qsa in qs]
+        return [qsa for qs in qvalDict for qsa in qs]
 
     @property
     def unknown_state_count(self):
@@ -756,17 +745,17 @@ class FullMDP(object):
 
     @property
     def unknown_state_action_count(self):
-        return sum([self.check_if_unknown(s,a) for s in self.tD for a in self.tD[s]])
+        return sum([self.check_if_unknown(s, a) for s in self.tD for a in self.tD[s]])
 
     @property
     def fully_unknown_state_count(self):
-        return sum([all([self.check_if_unknown(s,a) for a in self.tD[s]]) for s in self.tD ])
+        return sum([all([self.check_if_unknown(s, a) for a in self.tD[s]]) for s in self.tD])
 
     @property
     def fully_unknown_states(self):
-        return [s for s in self.tD if all([self.check_if_unknown(s,a) for a in self.tD[s]])]
+        return [s for s in self.tD if all([self.check_if_unknown(s, a) for a in self.tD[s]])]
 
-    def check_if_unknown(self, s, a = None):
+    def check_if_unknown(self, s, a=None):
         if s == "unknown_state":
             return False
         if a is not None:
@@ -777,8 +766,8 @@ class FullMDP(object):
     def get_seen_action_count(self, s):
         return sum([1 for a in self.tC[s] if "unknown_state" not in self.tC[s][a]])
 
-    def get_explored_action_count(self,s):
-        return sum([1 for a in self.tC[s] if sum(self.tC[s][a].values())> self.vi_params["rmax_thres"]])
+    def get_explored_action_count(self, s):
+        return sum([1 for a in self.tC[s] if sum(self.tC[s][a].values()) > self.vi_params["rmax_thres"]])
 
     @property
     def tran_prob_distribution(self):
@@ -813,7 +802,8 @@ class FullMDP(object):
 
     @property
     def explored_action_count_distribution(self):
-        return [sum([1 for a in self.tC[s] if sum(self.tC[s][a].values()) > self.vi_params["rmax_thres"]]) for s in self.tC]
+        return [sum([1 for a in self.tC[s] if sum(self.tC[s][a].values()) > self.vi_params["rmax_thres"]]) for s in
+                self.tC]
 
     @property
     def seen_action_count_distribution(self):
@@ -821,7 +811,7 @@ class FullMDP(object):
 
     @property
     def state_count_distribution(self):
-        return [ sum([sum(self.tC[s][a].values()) for a in self.tC[s]]) for s in self.tC ]
+        return [sum([sum(self.tC[s][a].values()) for a in self.tC[s]]) for s in self.tC]
 
     @property
     def self_loop_prob_distribution(self):
@@ -867,14 +857,15 @@ class FullMDP(object):
                 m2_hs, a, m2_hns = hAsh(m2_batch_s_d[i]), int(batch_a[i][0]), hAsh(m2_batch_ns_d[i])
                 if (m1_hs, a, m1_hns) not in processed_transitions and m1_hns != "unknown_state":
                     processed_transitions.append((m1_hs, a, m1_hns))
-                    transition_error += abs(m1.tD[m1_hs][a][m1_hns] - m2.tD[m2_hs][a][m2_hns]) # the first term is mostly 1, second term is varying.
-                    reward_error += abs(m1.rD[m1_hs][a][m1_hns] - m2.rD[m2_hs][a][m2_hns]) # the first term is mostly deterministic
+                    transition_error += abs(m1.tD[m1_hs][a][m1_hns] - m2.tD[m2_hs][a][
+                        m2_hns])  # the first term is mostly 1, second term is varying.
+                    reward_error += abs(
+                        m1.rD[m1_hs][a][m1_hns] - m2.rD[m2_hs][a][m2_hns])  # the first term is mostly deterministic
                 else:
                     continue
 
         # approximation_error
         return transition_error
-
 
     def opt_bellman_backup_step_cpu(self):
         backup_error = 0
@@ -925,7 +916,6 @@ class FullMDP(object):
             self.s_vD[s] = new_val
             self.s_pD[s] = max(self.s_qD[s], key=self.s_qD[s].get)
         self.s_curr_vi_error = backup_error
-
 
     def opt_bellman_backup_step_gpu(self):
         # Temporary variables

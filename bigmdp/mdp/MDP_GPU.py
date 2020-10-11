@@ -41,22 +41,14 @@ class FullMDP(object):
                             "rmax_thres": 10,
                             "balanced_explr": False,
                             "rmin": -1000},
-                 mdp_params={"weight_transitions": True,
-                             "mdp_build_k": 10,
-                             "plcy_lift_k": 10,
-                             "knn_delta": 0.01,
-                             "calc_action_vector": True,
-                             "penalty_beta": 1},
-                 default_mode="GPU",
-                 smooth_with_seen=True):
+                 knn_delta = 0.01,
+                 default_mode="GPU"):
 
         """
         :param A: Action Space of the MDP
         :param ur: reward for undefined state action pair
         """
         self.omit_list = ["end_state", "unknown_state"]
-        self.penalty_beta = mdp_params["penalty_beta"]
-        self.smooth_with_seen = smooth_with_seen
 
         self.known_sa_dict = defaultdict(init2zero_def_dict)
         self.KDTree = None
@@ -64,12 +56,9 @@ class FullMDP(object):
         self.known_sa_list = []
         self.s_list_D = []
 
-        self.penalize_uncertainity = mdp_params["penalize_unknown_transitions"]
 
         self.consumption_count = 0
-        self.mdp_build_k = mdp_params["mdp_build_k"]
-        self.plcy_lift_k = mdp_params["plcy_lift_k"]
-        self.knn_delta = mdp_params["knn_delta"]
+        self.knn_delta = knn_delta
 
         # KNN Params
         self.known_tC = defaultdict(init2zero_def_def_dict)
@@ -87,7 +76,6 @@ class FullMDP(object):
         self.trD = defaultdict(init2zero_def_def_dict)  # Transition reverse dynamics tracker to delete missing links
         self.ur = ur
         self.A = A
-        self.weight_transitions = mdp_params["weight_transitions"]
         self.default_mode = default_mode
 
         # MDP dict to matrix api Parameters # i = index
@@ -108,15 +96,12 @@ class FullMDP(object):
         self.rewardMatrix_cpu = np.zeros(m_shape).astype('float32')
 
         # MDP matrices GPU
-        self.tranProbMatrix_gpu = gpuarray.to_gpu( np.zeros(m_shape).astype('float32'))
-        self.tranidxMatrix_gpu = gpuarray.to_gpu( np.zeros(m_shape).astype('float32'))
-        self.rewardMatrix_gpu = gpuarray.to_gpu( np.zeros(m_shape).astype('float32'))
+        self.tranProbMatrix_gpu = gpuarray.to_gpu(np.zeros(m_shape).astype('float32'))
+        self.tranidxMatrix_gpu = gpuarray.to_gpu(np.zeros(m_shape).astype('float32'))
+        self.rewardMatrix_gpu = gpuarray.to_gpu(np.zeros(m_shape).astype('float32'))
 
         # Initialize for unknown and end states
-        self.tranCountMatrix_cpu[:, :, 0] = 1  # [a_idx, s_idx, ns_id_idx] # everything goes to unknown state
-        self.tranProbMatrix_cpu[:, :, 0] = 1  # [a_idx, s_idx, ns_id_idx] # everything goes to unknown state
-        self.rewardCountMatrix_cpu[:, :, 0] = self.ur  # [a_idx, s_idx, ns_id_idx] # everything  has ur rewards
-        self.rewardMatrix_cpu[:, :, 0] = self.ur  # [a_idx, s_idx, ns_id_idx] # everything  has ur rewards
+        self._initialize_end_and_unknown_state()
 
         # Help :
         # self.tranCountMatrix_cpu = count Matrix [a_idx, s_idx, ns_id_idx] [Holds tran Counts] ,
@@ -124,7 +109,6 @@ class FullMDP(object):
         # self.tranProbMatrix_cpu =  prob Matrix [a_idx, s_idx, ns_id_idx] [Holds tran probabilities]
         # self.rewardCountMatrix_cpu = count Matrix [a_idx, s_idx, ns_id_idx] [Holds reward Counts]
         # self.rewardMatrix_cpu = reward Matrix [a_idx, s_idx, ns_id_idx] [Holds normalized rewards]
-
 
         # Optimal Policy  parameters
         self.pD_cpu = np.zeros((self.MAX_S,)).astype('uint')  # Optimal Policy Vector
@@ -138,7 +122,7 @@ class FullMDP(object):
         self.e_pD_cpu = np.zeros((self.MAX_S,)).astype('uint')  # Optimal Policy Vector
         self.e_vD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S, 1)).astype('float32'))
         self.e_qD_gpu = gpuarray.to_gpu(np.zeros((self.MAX_S, len(self.A))).astype('float32'))
-        self.e_rewardMatrix_gpu = gpuarray.to_gpu( np.zeros(m_shape).astype('float32'))
+        self.e_rewardMatrix_gpu = gpuarray.to_gpu(np.zeros(m_shape).astype('float32'))
         self.e_vD_cpu = np.zeros((self.MAX_S, 1)).astype('float32')
         self.e_qD_cpu = np.zeros((self.MAX_S, len(self.A))).astype('float32')
         self.e_rewardMatrix_cpu = np.zeros(m_shape).astype('float32')
@@ -161,7 +145,6 @@ class FullMDP(object):
 
         # Track fully unknown_states
         self._fully_unknown_states = {}
-        # self._initialize_end_and_unknown_state()
 
         # self._update_nn_kd_tree()
         # self._update_nn_kd_with_action_tree()
@@ -169,18 +152,36 @@ class FullMDP(object):
         # cached items
         # self.refresh_cache_dicts()
 
+    def _initialize_end_and_unknown_state(self):
+        self.tranCountMatrix_cpu[:, :, 0] = 1  # [a_idx, s_idx, ns_id_idx] # everything goes to unknown state
+        self.tranProbMatrix_cpu[:, :, 0] = 1  # [a_idx, s_idx, ns_id_idx] # everything goes to unknown state
+        self.rewardCountMatrix_cpu[:, :, 0] = self.ur  # [a_idx, s_idx, ns_id_idx] # everything  has ur rewards
+        self.rewardMatrix_cpu[:, :, 0] = self.ur  # [a_idx, s_idx, ns_id_idx] # everything  has ur rewards
+
+        self.tranidxMatrix_cpu[:, 0, 0] = 0  # unknown state has a self loop
+        self.tranCountMatrix_cpu[:, 0, 0] = 1  # unknown state has a self loop
+        self.tranProbMatrix_cpu[:, 0, 0] = 1  # unknown state has a self loop
+        self.rewardCountMatrix_cpu[:, 0, 0] = 0  # unknown state self loop has no rewards
+        self.rewardMatrix_cpu[:, 0, 0] = 0  # unknown state self loop has no rewards
+
+        self.tranidxMatrix_cpu[:, 1, 0] = 1  # end state has a self loop
+        self.tranCountMatrix_cpu[:, 1, 0] = 1  # end state has a self loop
+        self.tranProbMatrix_cpu[:, 1, 0] = 1  # end state has a self loop
+        self.rewardCountMatrix_cpu[:, 1, 0] = 0  # end state self loop has no rewards
+        self.rewardMatrix_cpu[:, 1, 0] = 0  # end state has self loop no rewards
+
     def refresh_cache_dicts(self):
         self.tD = defaultdict(init2zero_def_def_dict)  # Transition Probabilities
         self.rD = defaultdict(init2zero_def_def_dict)  # Transition Probabilities
 
         for s, s_i in self.s2i.items():
             for a in self.A:
-                for ns_i_slot, ns_i in enumerate(self.tranidxMatrix_cpu[self.a2i[a], s_i]):
+                for ns_slot, ns_i in enumerate(self.tranidxMatrix_cpu[self.a2i[a], s_i]):
                     ns, a_i = self.i2s[ns_i], self.a2i[a]
-                    # print(f"ns:{ns},ns_i:{ns_i}, a_i:{a_i}, a:{a}, s:{s}, s_i:{s_i} ,  ns_id_idx:{ns_id_idx}")
-                    self.tD[s][a][ns] = self.tranProbMatrix_cpu[a_i, s_i, ns_i]
-                    self.rD[s][a][ns] = self.rewardMatrix_cpu[a_i, s_i, ns_i]
-                    # Transition Probabilities
+                    if self.tranProbMatrix_cpu[a_i, s_i, ns_slot] > 0:
+                        # print(f"ns:{ns},ns_i:{ns_i}, a_i:{a_i}, a:{a}, s:{s}, s_i:{s_i} ,  ns_slot:{ns_slot}")
+                        self.tD[s][a][ns] = self.tranProbMatrix_cpu[a_i, s_i, ns_slot]
+                        self.rD[s][a][ns] = self.rewardMatrix_cpu[a_i, s_i, ns_slot]
 
     @property
     def missing_state_action_count(self):
@@ -233,28 +234,28 @@ class FullMDP(object):
         self.filled_mask[indx] = 1
         return indx
 
-    def get_ns_i_slot(self,s_i:int,a_i:int,ns_i:int):
+    def get_ns_i_slot(self, s_i: int, a_i: int, ns_i: int):
         # returns occupied slot if already exists
         # returns new slot if does not exist
         # returns slot_with_least_count if full
         # returns slot, override_flag
         slot_counts = {}
-        for slot, _ns_i in enumerate(self.tranidxMatrix_cpu[a_i,s_i]):
-            if _ns_i == ns_i: # i.e. ns_i is already allocated a slot
+        for slot, _ns_i in enumerate(self.tranidxMatrix_cpu[a_i, s_i]):
+            if _ns_i == ns_i:  # i.e. ns_i is already allocated a slot
                 return slot, 0
-            elif _ns_i == 0: # i.e. slot not allocated, this slot is free:
+            elif _ns_i == 0:  # i.e. slot not allocated, this slot is free:
                 return slot, 1
             else:
-                slot_counts[slot] = self.tranCountMatrix_cpu[a_i,s_i,slot]
+                slot_counts[slot] = self.tranCountMatrix_cpu[a_i, s_i, slot]
 
         # i.e all slots are full
         return min(slot_counts, key=slot_counts.get), 1
 
-    def index_if_new_state(self,s):
+    def index_if_new_state(self, s):
         is_new = s not in self.s2i
         if is_new:
             i = self.get_free_index()
-            self.s2i[s], self.i2s[i] = i,s
+            self.s2i[s], self.i2s[i] = i, s
         return is_new
 
     def consume_transition(self, tran):
@@ -276,11 +277,11 @@ class FullMDP(object):
         s_i, a_i, ns_i = self.s2i[s], self.a2i[a], self.s2i[ns]
 
         # Update MDP with new transition
-        slot, override = self.get_ns_i_slot(s_i,a_i,ns_i)
-        self.update_count_matrices(s_i, a_i, ns_i, r, slot,override)
+        slot, override = self.get_ns_i_slot(s_i, a_i, ns_i)
+        self.update_count_matrices(s_i, a_i, ns_i, r, slot, override)
         self.update_prob_matrices(s_i, a_i)
 
-    def update_count_matrices(self,s_i,a_i,ns_i,r,slot,override):
+    def update_count_matrices(self, s_i, a_i, ns_i, r, slot, override):
         if override:
             self.tranidxMatrix_cpu[a_i, s_i, slot] = ns_i
             self.tranCountMatrix_cpu[a_i, s_i, slot] = 1
@@ -291,9 +292,11 @@ class FullMDP(object):
 
     def update_prob_matrices(self, s_i, a_i):
         # Normalize count Matrix
-        self.tranProbMatrix_cpu[a_i,s_i] = self.tranCountMatrix_cpu[a_i,s_i]/np.sum(self.tranCountMatrix_cpu[a_i,s_i])
-        self.rewardMatrix_cpu[a_i,s_i] = self.rewardCountMatrix_cpu[a_i,s_i]/np.sum(self.tranCountMatrix_cpu[a_i,s_i])
-        self.e_rewardMatrix_cpu[a_i,s_i] = np.array([self.get_rmax_reward_logic(s_i, a_i)] * self.MAX_NS).astype(
+        self.tranProbMatrix_cpu[a_i, s_i] = self.tranCountMatrix_cpu[a_i, s_i] / np.sum(
+            self.tranCountMatrix_cpu[a_i, s_i])
+        self.rewardMatrix_cpu[a_i, s_i] = self.rewardCountMatrix_cpu[a_i, s_i] / (
+                self.tranCountMatrix_cpu[a_i, s_i] + 1e-12)
+        self.e_rewardMatrix_cpu[a_i, s_i] = np.array([self.get_rmax_reward_logic(s_i, a_i)] * self.MAX_NS).astype(
             "float32")
         # assert len(self.tranProbMatrix_cpu[i][j]) == len(self.tranidxMatrix_cpu[i][j])
 
@@ -316,7 +319,7 @@ class FullMDP(object):
 
         # self.tranCountMatrix_gpu = gpuarray.to_gpu(self.tranCountMatrix_cpu)
         self.tranProbMatrix_gpu = gpuarray.to_gpu(self.tranProbMatrix_cpu)
-        self.tranidxMatrix_gpu = gpuarray.to_gpu(self.tranidxMatrix_cpu)
+        self.tranidxMatrix_gpu = gpuarray.to_gpu(self.tranidxMatrix_cpu.astype("float32"))
         self.rewardMatrix_gpu = gpuarray.to_gpu(self.rewardMatrix_cpu)
         self.e_rewardMatrix_gpu = gpuarray.to_gpu(self.e_rewardMatrix_cpu)
 
@@ -410,51 +413,44 @@ class FullMDP(object):
     def sample_action_from_qval_dict(self, qval_dict):
         return random.choices(list(qval_dict.keys()), list(qval_dict.values()), k=1)[0]
 
-    def get_action_from_q_matrix(self, hs, qMatrix, smoothing=False, soft_q=False, weight_nn=False):
-        if smoothing:
-            if self.smooth_with_seen:
-                qval_dict = {}
-                for a in self.A:
-                    knn_hsa = self._get_knn_hs_kd_with_action_tree(self.hash_state_action(hs, a), k=self.plcy_lift_k)
-                    qval_a = np.mean([qMatrix[self.s2i[nn_hs]][self.a2i[a_]] for nn_hs, a_ in knn_hsa])
-                    qval_dict[a] = qval_a
-            else:
-                knn_hs = self._get_knn_hs_kdtree(hs, k=self.plcy_lift_k)
-                if weight_nn:
-                    knn_hs_normalized = self.get_kernel_probs(knn_hs, delta=self.knn_delta)
-                    all_qval_dict = [
-                        {self.i2a[i]: qval * norm_dist for i, qval in enumerate(qMatrix[self.s2i[nn_hs]])} for
-                        nn_hs, norm_dist in knn_hs_normalized.items()]
-                    qval_dict = {a: np.sum([_qval_dict[a] for _qval_dict in all_qval_dict]) for a in self.A}
-                else:
-                    all_qval_dict = [{self.i2a[i]: qval for i, qval in enumerate(qMatrix[self.s2i[nn_hs]])} for
-                                     nn_hs in knn_hs]
-                    qval_dict = {a: np.mean([_qval_dict[a] for _qval_dict in all_qval_dict]) for a in self.A}
-
+    def get_action_from_q_matrix(self, hs, qMatrix, soft=False, weight_nn=False, plcy_k=1, kNN_on_sa=False):
+        qval_dict = {}
+        if kNN_on_sa:
+            for a in self.A:
+                knn_hsa = self._get_knn_hs_kd_with_action_tree((hs, a), k=plcy_k)
+                knn_hs_norm = self.get_kernel_probs(knn_hsa, delta=self.knn_delta) \
+                    if weight_nn else {k: 1 / len(knn_hsa) for k in knn_hsa}
+                qval_dict[a] = np.sum([qMatrix[self.s2i[sa[0]], self.a2i[sa[1]]] * p for sa, p in knn_hs_norm.items()])
         else:
-            nn_hs = self._get_nn_hs_kdtree(hs)
-            qval_dict = {self.i2a[i]: qval for i, qval in enumerate(qMatrix[self.s2i[nn_hs]])}
+            knn_hs = self._get_knn_hs_kdtree(hs, k=plcy_k)
+            knn_hs_norm = self.get_kernel_probs(knn_hs, delta=self.knn_delta) \
+                if weight_nn else {k: 1 / len(knn_hs) for k in knn_hs}
+            for a in self.A:
+                qval_dict[a] = np.sum([qMatrix[self.s2i[s], self.a2i[a]] * p for s, p in knn_hs_norm.items()])
 
-        if soft_q:
+        if soft:
             return self.sample_action_from_qval_dict(qval_dict)
         else:
             return max(qval_dict, key=qval_dict.get)
 
-    def get_kernel_probs(self, knn_dist_dict, delta =None):
-        #todo Add a choice to do exponential averaging here.
+    def get_opt_action(self, hs,  soft=False, weight_nn=False, plcy_k=1, kNN_on_sa=False):
+        return self.get_action_from_q_matrix(hs, self.qD_cpu, soft=soft, weight_nn=weight_nn,
+                                             plcy_k=plcy_k, kNN_on_sa=kNN_on_sa)
+
+    def get_safe_action(self, hs, soft=False, weight_nn=False, plcy_k=1, kNN_on_sa=False):
+        return self.get_action_from_q_matrix(hs, self.s_qD_cpu,soft=soft, weight_nn=weight_nn,
+                                             plcy_k=plcy_k, kNN_on_sa=kNN_on_sa)
+
+    def get_explr_action(self, hs, soft=False, weight_nn=False, plcy_k=1, kNN_on_sa=False):
+        return self.get_action_from_q_matrix(hs, self.e_qD_cpu, soft=soft, weight_nn=weight_nn,
+                                             plcy_k=plcy_k, kNN_on_sa=kNN_on_sa)
+
+    def get_kernel_probs(self, knn_dist_dict, delta=None):
+        # todo Add a choice to do exponential averaging here.
         delta = delta or self.knn_delta
         all_knn_kernels = {nn: 1 / (dist + delta) for nn, dist in knn_dist_dict.items()}
         all_knn_probs = {nn: knn_kernel / sum(all_knn_kernels.values()) for nn, knn_kernel in all_knn_kernels.items()}
         return all_knn_probs
-
-    def get_opt_action(self, hs, smoothing=False, soft_q=False, weight_nn=False):
-        return self.get_action_from_q_matrix(hs, self.qD_cpu, smoothing=smoothing, soft_q=soft_q, weight_nn=weight_nn)
-
-    def get_safe_action(self, hs, smoothing=False, soft_q=False, weight_nn=False):
-        return self.get_action_from_q_matrix(hs, self.s_qD_cpu, smoothing=smoothing, soft_q=soft_q, weight_nn=weight_nn)
-
-    def get_explr_action(self, hs, smoothing=False, soft_q=False, weight_nn=False):
-        return self.get_action_from_q_matrix(hs, self.e_qD_cpu, smoothing=smoothing, soft_q=soft_q, weight_nn=weight_nn)
 
     def get_state_count(self):
         return len(self.s2i)
@@ -465,7 +461,7 @@ class FullMDP(object):
         self.KDTree = KDTree(np.array(self.state_list), leaf_size=40)
 
     def _update_nn_kd_with_action_tree(self):
-        self.s_list_D = {a:[] for a in self.A}
+        self.s_list_D = {a: [] for a in self.A}
         for s in self.known_sa_dict:
             for a in self.known_sa_dict[s]:
                 self.s_list_D[a].append(s)
@@ -522,7 +518,7 @@ class FullMDP(object):
 
         st = time.time()
         curr_error = self.curr_vi_error
-        while self.curr_vi_error > eps:
+        while abs(self.curr_vi_error) > eps:
             self.do_optimal_backup(mode=mode, n_backups=250)
             if safe_bkp:
                 self.do_safe_backup(mode=mode, n_backups=250)
@@ -630,52 +626,55 @@ class FullMDP(object):
 
     def opt_bellman_backup_step_cpu(self):
         backup_error = 0
-        for s in self.tD:
-            for a in self.A:
-                expected_ns_val = sum(self.tD[s][a][ns] * self.vD[ns] for ns in self.tD[s][a])
-                self.qD[s][a] = self.rD[s][a] + self.vi_params["gamma"] * expected_ns_val
+        for s, s_i in self.s2i.items():
+            for a, a_i in self.a2i.items():
+                expected_ns_val = np.sum(self.tranProbMatrix_cpu[a_i, s_i] *
+                                         np.array([self.vD_cpu[ns] for ns in self.tranidxMatrix_cpu[a_i, s_i]]))
+                expected_reward = np.sum(self.tranProbMatrix_cpu[a_i, s_i] * self.rewardMatrix_cpu[a_i, s_i])
+                self.qD_cpu[s_i, a_i] = expected_reward + self.vi_params["gamma"] * expected_ns_val
 
-            new_val = max(self.qD[s].values())
+            new_val = np.max(self.qD_cpu[s_i])
 
-            backup_error = max(backup_error, abs(new_val - self.vD[s]))
-            self.vD[s] = new_val
-            self.pD[s] = max(self.qD[s], key=self.qD[s].get)
+            backup_error = max(backup_error, abs(new_val - self.vD_cpu[s_i]))
+            self.vD_cpu[s_i] = new_val
+            self.pD_cpu[s_i] = np.argmax(self.qD_cpu[s_i])
 
         self.curr_vi_error = backup_error
 
     def explr_bellman_backup_step_cpu(self):
         backup_error = 0
-        for s in self.tD:
-            for a in self.A:
-                self.e_rD[s][a] = self.get_rmax_reward_logic(s, a)
-                self.e_qD[s][a] = self.e_rD[s][a] + self.vi_params["gamma"] * sum(
-                    self.tD[s][a][ns] * self.e_vD[ns] for ns in self.tD[s][a])
+        for s, s_i in self.s2i.items():
+            for a, a_i in self.a2i.items():
+                expected_ns_val = np.sum(self.tranProbMatrix_cpu[a_i, s_i] *
+                                         np.array([self.e_vD_cpu[ns] for ns in self.tranidxMatrix_cpu[a_i, s_i]]))
+                expected_reward = np.sum(self.tranProbMatrix_cpu[a_i, s_i] * self.rewardMatrix_cpu[a_i, s_i])
+                self.e_qD_cpu[s][a] = expected_reward + self.vi_params["gamma"] * expected_ns_val
 
-            new_val = max(self.e_qD[s].values())
+            max_q, sum_q = max(self.e_qD_cpu[s].values()), sum(self.e_qD_cpu[s].values())
+            new_val = (1 - self.vi_params["slip_prob"]) * max_q + self.vi_params["slip_prob"] * sum_q
 
-            backup_error = max(backup_error, abs(new_val - self.e_vD[s]))
-            self.e_vD[s] = new_val
-            self.e_pD[s] = max(self.e_qD[s], key=self.e_qD[s].get)
+            backup_error = max(backup_error, abs(new_val - self.e_vD_cpu[s]))
+            self.e_vD_cpu[s_i] = new_val
+            self.e_pD_cpu[s_i] = max(self.e_qD_cpu[s], key=self.e_qD_cpu[s].get)
+
         self.e_curr_vi_error = backup_error
 
     def safe_bellman_backup_step_cpu(self):
         backup_error = 0
-        for s in self.tD:
-            next_explored_state_val_list = []
-            for a in self.A:
-                expected_ns_val = sum(self.tD[s][a][ns] * self.s_vD[ns] for ns in self.tD[s][a])
-                self.s_qD[s][a] = self.rD[s][a] + self.vi_params["gamma"] * expected_ns_val
-                if "unknown_state" not in self.tD[s][a]:
-                    next_explored_state_val_list.append(self.s_qD[s][a])
-            if next_explored_state_val_list:
-                new_val = (1 - self.vi_params["slip_prob"]) * max(self.s_qD[s].values()) + self.vi_params[
-                    "slip_prob"] * sum(next_explored_state_val_list) / len(next_explored_state_val_list)
-            else:
-                new_val = max(self.s_qD[s].values())
+        for s, s_i in self.s2i.items():
+            for a, a_i in self.a2i.items():
+                expected_ns_val = np.sum(self.tranProbMatrix_cpu[a_i, s_i] *
+                                         np.array([self.s_vD_cpu[ns] for ns in self.tranidxMatrix_cpu[a_i, s_i]]))
+                expected_reward = np.sum(self.tranProbMatrix_cpu[a_i, s_i] * self.rewardMatrix_cpu[a_i, s_i])
+                self.s_qD_cpu[s_i, a_i] = expected_reward + self.vi_params["gamma"] * expected_ns_val
 
-            backup_error = max(backup_error, abs(new_val - self.s_vD[s]))
-            self.s_vD[s] = new_val
-            self.s_pD[s] = max(self.s_qD[s], key=self.s_qD[s].get)
+            max_q, sum_q = np.max(self.s_qD_cpu[s_i]), np.sum(self.s_qD_cpu[s_i])
+            new_val = (1 - self.vi_params["slip_prob"]) * max_q + self.vi_params["slip_prob"] * sum_q
+
+            backup_error = max(backup_error, abs(new_val - self.s_vD_cpu[s_i]))
+            self.s_vD_cpu[s_i] = new_val
+            self.s_pD_cpu[s_i] = np.argmax(self.s_qD_cpu[s_i])
+
         self.s_curr_vi_error = backup_error
 
     def opt_bellman_backup_step_gpu(self):

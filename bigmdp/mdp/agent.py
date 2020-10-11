@@ -29,22 +29,29 @@ class SimpleAgent(object):
         and takes the action that most often leads to highest average value.
     """
 
-    def __init__(self, mdp_T, net, gamma=0.99, pred_error_threshold=1, epsilon_min=0.1,
-                 fill_with="model", sample_neighbors=True, penalty_type=False, penalty_beta=1,
-                 abstraction_flag=True, abstraction_threshold=0.05, filter_for_nn_region=True, use_prediction=True,
-                 normalize_by_distance=False):
+    def __init__(self, mdp_T, net, fill_with, mdp_build_k, plcy_k=None,
+                 kNN_on_sa=False, soft_at_plcy=False, normalize_by_distance=True,
+                 penalty_type=False, penalty_beta=1,
+                 abstraction_flag=True, abstraction_threshold=0.05,
+                 ):
 
-        # Main Components
-        self.mdp_T = mdp_T
+        # Encoder network
         self.net = net
-        self.pred_error_threshold = pred_error_threshold
-        self.fill_with = fill_with
-        self.penalty_type = penalty_type
-        self.penalty_beta = penalty_beta
-        self.norm_by_dist = normalize_by_distance
-        self.gamma = gamma  # discount factor
         assert all([hasattr(net, attr) for attr in
                     ["encode_batch", "encode_single", "predict_single_transition", "predict_batch_transition"]])
+
+        # MDP build parameters
+        self.mdp_T = mdp_T
+        self.fill_with = fill_with
+        self.mdp_build_k = mdp_build_k
+        self.norm_by_dist = normalize_by_distance
+        self.penalty_type = penalty_type
+        self.penalty_beta = penalty_beta
+
+        # MDP policy parameters
+        self.plcy_k = plcy_k or mdp_build_k
+        self.soft_at_plcy = soft_at_plcy
+        self.kNN_on_sa = kNN_on_sa
 
         # Abstraction Flags
         self.abstraction_flag = abstraction_flag
@@ -65,30 +72,32 @@ class SimpleAgent(object):
 
         self.seed_policies()
 
-    def random_policy(self, obs):
-        return random.choice(self.mdp_T.A)
-
-    def opt_policy(self, obs):
-        return self.mdp_T.get_opt_action(self.net.encode_single(obs), smoothing=self.smoothing,
-                                         soft_q=self.soft_q, weight_nn=self.norm_by_dist)
-
-    def safe_policy(self, obs):
-        return self.mdp_T.get_safe_action(self.net.encode_single(obs), smoothing=self.smoothing,
-                                          soft_q=self.soft_q, weight_nn=self.norm_by_dist)
-
-    def eps_optimal_policy(self, obs):
-        eps_opt_pol = self.get_eps_policy(self.opt_policy, self.random_policy, epsilon=0.1)
-        return eps_opt_pol(obs)
-
     def get_eps_policy(self, greedy_policy, random_policy, epsilon=0.1):
         """
         returns a exploration exploitation policy based on epsilon , greedy and random policy
         """
         return lambda s: random_policy(s) if (np.random.rand() < epsilon) else greedy_policy(s)
 
-    def seed_policies(self, smoothing=False, soft_q=False):
-        self.smoothing = smoothing
-        self.soft_q = soft_q
+    def random_policy(self, obs):
+        return random.choice(self.mdp_T.A)
+
+    def opt_policy(self, obs):
+        return self.mdp_T.get_opt_action(self.net.encode_single(obs), plcy_k=self.plcy_k,
+                                         soft=self.soft_at_plcy, weight_nn=self.norm_by_dist, kNN_on_sa=self.kNN_on_sa)
+
+    def safe_policy(self, obs):
+        return self.mdp_T.get_safe_action(self.net.encode_single(obs), plcy_k=self.plcy_k,
+                                          soft=self.soft_at_plcy, weight_nn=self.norm_by_dist, kNN_on_sa=self.kNN_on_sa)
+
+    def eps_optimal_policy(self, obs):
+        eps_opt_pol = self.get_eps_policy(self.opt_policy, self.random_policy, epsilon=0.1)
+        return eps_opt_pol(obs)
+
+    def seed_policies(self, plcy_k=None, soft_at_plcy=None, kNN_on_sa=None):
+        self.plcy_k = plcy_k if plcy_k is not None else self.plcy_k
+        self.soft_at_plcy = soft_at_plcy if soft_at_plcy is not None else self.soft_at_plcy
+        self.kNN_on_sa = kNN_on_sa if kNN_on_sa is not None else self.kNN_on_sa
+
         self.policies = {"optimal": self.opt_policy,
                          "random": self.random_policy,
                          "eps_optimal": self.eps_optimal_policy,
@@ -145,27 +154,31 @@ class SimpleAgent(object):
                 s_i, a_i = self.mdp_T.s2i[s_], self.mdp_T.a2i[a_]
 
                 # get distances
-                knn_sa = self.mdp_T._get_knn_hs_kd_with_action_tree((s_, a_), k=self.mdp_T.mdp_build_k)
+                knn_sa = self.mdp_T._get_knn_hs_kd_with_action_tree((s_, a_), k=self.mdp_build_k)
                 knn_sa_normalized = self.mdp_T.get_kernel_probs(knn_sa, delta=self.mdp_T.knn_delta)
                 self.dist_to_nn_cache.extend(list(knn_sa.values()))
 
                 # get new transition counts
                 tran_counts, reward_counts = defaultdict(init2zero), defaultdict(init2zero)
-                for nn_sa, norm_dist in knn_sa_normalized.items():
+                for nn_sa in knn_sa_normalized:
                     nn_s, a = nn_sa
+                    norm_dist, dist = knn_sa_normalized[nn_sa], knn_sa[nn_sa]
                     for nn_ns in list(self.mdp_T.known_tC[nn_s][a].keys()):
-                        orig_tr, orig_tc = self.mdp_T.known_tC[nn_s][a][nn_s], self.mdp_T.known_rC[nn_s][a][nn_s]
-                        tran_counts[nn_ns] += int(norm_dist * 100 * orig_tc) if self.norm_by_dist else 1
-                        reward_counts[nn_ns] += int(
-                            norm_dist * 100 * orig_tr) if self.norm_by_dist else orig_tr / orig_tc
+                        orig_tr, orig_tc = self.mdp_T.known_tC[nn_s][a][nn_ns], self.mdp_T.known_rC[nn_s][a][nn_ns]
+                        count_ = int(norm_dist * 100 * orig_tc) if self.norm_by_dist else 1
+                        tran_counts[nn_ns] += count_
+                        disc_reward = self.get_reward_logic(orig_tr / orig_tc, dist, self.penalty_type,
+                                                            self.penalty_beta)
+                        reward_counts[nn_ns] += count_ * disc_reward
 
-                top_k_ns = heapq.nlargest(self.mdp_T.mdp_build_k, tran_counts, key=tran_counts.get)
+                top_k_ns = heapq.nlargest(self.mdp_build_k, tran_counts, key=tran_counts.get)
                 tran_counts = {s: tran_counts[s] for s in top_k_ns}  # filter for overflow
                 reward_counts = {s: reward_counts[s] for s in top_k_ns}  # filter for overflow
                 new_transitions = [(i, ns, tran_counts[ns], reward_counts[ns]) for i, ns in enumerate(tran_counts)]
 
                 # update count matrices
-                assert len(new_transitions) == self.mdp_T.mdp_build_k
+                assert len(new_transitions) <= self.mdp_build_k, \
+                    f"knn_len:{len(knn_sa)}, len: {len(new_transitions)}, tran_Counds: {len(tran_counts)}"
                 for slot, ns, t_count, r_count in new_transitions:
                     ns_i = self.mdp_T.s2i[ns]
                     self.mdp_T.tranidxMatrix_cpu[a_i, s_i, slot] = ns_i
@@ -206,9 +219,9 @@ class SimpleAgent(object):
     def get_q_value(self, s, a):
         return self.qvalDict_cache[self.mdp_T._get_nn_hs_kdtree(self.net.encode_single(s))][a]
 
-    def build_mdp(self, train_buffer):
+    def build_mdp(self, train_buffer, verbose=False):
 
-        print("Step 1 (Parse Transitions):  Running")
+        if verbose: print("Step 1 (Parse Transitions):  Running")
         st = time.time()
 
         _batch_size = 256
@@ -220,25 +233,28 @@ class SimpleAgent(object):
             self.batch_parse(batch_ob.numpy(), batch_a.numpy().squeeze(), batch_ob_prime.numpy(),
                              batch_r.numpy().squeeze(), batch_d.numpy().squeeze())
 
-        print("Step 1 [Parse Transitions]:  Complete,  Time Elapsed: {}\n\n".format(time.time() - st))
-
-        print("Step 2 [Seed Seen Transitions + Unknown (s,a) pairs]:  Running")
+        if verbose: print("Step 1 [Parse Transitions]:  Complete,  Time Elapsed: {}\n\n".format(time.time() - st))
+        if verbose: print("Step 2 [Seed Seen Transitions + Unknown (s,a) pairs]:  Running")
         st = time.time()
+
         self.commit_seen_transitions()
-        print("Step 2 (Commit Seen Transitions):  Complete,  Time Elapsed: {} \n\n".format(time.time() - st))
 
-        print("Step 3 [Commit all Transitions]:  Running")
+        if verbose: print("Step 2 (Commit Seen Transitions):  Complete,  Time Elapsed: {} \n\n".format(time.time() - st))
+        if verbose: print("Step 3 [Commit all Transitions]:  Running")
         st = time.time()
+
         self.commit_predicted_transitions(verbose=True)
-        print("Step 3 (Commit UnSeen Transitions):  Complete,  Time Elapsed: {}".format(time.time() - st))
-
-        print("Step 4 [Solve MDP]:  Running")
+        
+        if verbose: print("Step 3 (Commit UnSeen Transitions):  Complete,  Time Elapsed: {}".format(time.time() - st))
+        if verbose: print("Step 4 [Solve MDP]:  Running")
         st = time.time()
+
         self.solve_mdp()
-        print("% of missing transitions",
-              self.mdp_T.unknown_state_action_count / (len(self.mdp_T.tD) * len(self.mdp_T.A)))
-        self.seed_policies(smoothing=False, soft_q=False)
-        print("Step 4 [Solve MDP]:  Complete,  Time Elapsed: {}\n\n".format(time.time() - st))
+        self.mdp_T.refresh_cache_dicts()
+        self.seed_policies()
+
+        if verbose: print("% of missing trans", self.mdp_T.unknown_state_action_count / (len(self.mdp_T.tD) * len(self.mdp_T.A)))
+        if verbose: print("Step 4 [Solve MDP]:  Complete,  Time Elapsed: {}\n\n".format(time.time() - st))
 
     def cache_mdp(self, file_path):
         st = time.time()

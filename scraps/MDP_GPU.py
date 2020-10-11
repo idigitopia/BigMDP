@@ -7,7 +7,7 @@ from bigmdp.mdp.kernels import NN_kernel_code_template
 from copy import deepcopy as cpy
 from collections import Counter
 import random
-from bigmdp.scraps.tmp_vi_helper import *
+from scraps.tmp_vi_helper import *
 
 def init2dict():
     return {}
