@@ -5,4 +5,4 @@ examples/result_dump/*
 bigmdp.egg-info
 *__pycache__*
 scraps
-*.ipy*
+*.ipynb_checkpoint*

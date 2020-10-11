@@ -41,7 +41,7 @@ class FullMDP(object):
                             "rmax_thres": 10,
                             "balanced_explr": False,
                             "rmin": -1000},
-                 knn_delta = 0.01,
+                 knn_delta=0.01,
                  default_mode="GPU"):
 
         """
@@ -55,7 +55,6 @@ class FullMDP(object):
         self.KDActionTrees = {a: None for a in A}
         self.known_sa_list = []
         self.s_list_D = []
-
 
         self.consumption_count = 0
         self.knn_delta = knn_delta
@@ -433,12 +432,12 @@ class FullMDP(object):
         else:
             return max(qval_dict, key=qval_dict.get)
 
-    def get_opt_action(self, hs,  soft=False, weight_nn=False, plcy_k=1, kNN_on_sa=False):
+    def get_opt_action(self, hs, soft=False, weight_nn=False, plcy_k=1, kNN_on_sa=False):
         return self.get_action_from_q_matrix(hs, self.qD_cpu, soft=soft, weight_nn=weight_nn,
                                              plcy_k=plcy_k, kNN_on_sa=kNN_on_sa)
 
     def get_safe_action(self, hs, soft=False, weight_nn=False, plcy_k=1, kNN_on_sa=False):
-        return self.get_action_from_q_matrix(hs, self.s_qD_cpu,soft=soft, weight_nn=weight_nn,
+        return self.get_action_from_q_matrix(hs, self.s_qD_cpu, soft=soft, weight_nn=weight_nn,
                                              plcy_k=plcy_k, kNN_on_sa=kNN_on_sa)
 
     def get_explr_action(self, hs, soft=False, weight_nn=False, plcy_k=1, kNN_on_sa=False):
@@ -628,8 +627,8 @@ class FullMDP(object):
         backup_error = 0
         for s, s_i in self.s2i.items():
             for a, a_i in self.a2i.items():
-                expected_ns_val = np.sum(self.tranProbMatrix_cpu[a_i, s_i] *
-                                         np.array([self.vD_cpu[ns] for ns in self.tranidxMatrix_cpu[a_i, s_i]]))
+                ns_values = np.array([self.vD_cpu[ns_i] for ns_i in self.tranidxMatrix_cpu[a_i, s_i]]).squeeze()
+                expected_ns_val = np.sum(self.tranProbMatrix_cpu[a_i, s_i] * ns_values)
                 expected_reward = np.sum(self.tranProbMatrix_cpu[a_i, s_i] * self.rewardMatrix_cpu[a_i, s_i])
                 self.qD_cpu[s_i, a_i] = expected_reward + self.vi_params["gamma"] * expected_ns_val
 
@@ -640,18 +639,36 @@ class FullMDP(object):
             self.pD_cpu[s_i] = np.argmax(self.qD_cpu[s_i])
 
         self.curr_vi_error = backup_error
+        return backup_error
+
+    def safe_bellman_backup_step_cpu(self):
+        backup_error = 0
+        for s, s_i in self.s2i.items():
+            for a, a_i in self.a2i.items():
+                ns_values = np.array([self.s_vD_cpu[ns_i] for ns_i in self.tranidxMatrix_cpu[a_i, s_i]]).squeeze()
+                expected_ns_val = np.sum(self.tranProbMatrix_cpu[a_i, s_i] * ns_values)
+                expected_reward = np.sum(self.tranProbMatrix_cpu[a_i, s_i] * self.rewardMatrix_cpu[a_i, s_i])
+                self.s_qD_cpu[s_i, a_i] = expected_reward + self.vi_params["gamma"] * expected_ns_val
+
+            max_q, sum_q = np.max(self.s_qD_cpu[s_i]), np.sum(self.s_qD_cpu[s_i])
+            new_val = (1 - self.vi_params["slip_prob"]) * max_q + self.vi_params["slip_prob"] * (sum_q - max_q)
+
+            backup_error = max(backup_error, abs(new_val - self.s_vD_cpu[s_i]))
+            self.s_vD_cpu[s_i] = new_val
+            self.s_pD_cpu[s_i] = np.argmax(self.s_qD_cpu[s_i])
+
+        self.s_curr_vi_error = backup_error
 
     def explr_bellman_backup_step_cpu(self):
         backup_error = 0
         for s, s_i in self.s2i.items():
             for a, a_i in self.a2i.items():
-                expected_ns_val = np.sum(self.tranProbMatrix_cpu[a_i, s_i] *
-                                         np.array([self.e_vD_cpu[ns] for ns in self.tranidxMatrix_cpu[a_i, s_i]]))
-                expected_reward = np.sum(self.tranProbMatrix_cpu[a_i, s_i] * self.rewardMatrix_cpu[a_i, s_i])
+                ns_values = np.array([self.e_vD_cpu[ns_i] for ns_i in self.tranidxMatrix_cpu[a_i, s_i]]).squeeze()
+                expected_ns_val = np.sum(self.tranProbMatrix_cpu[a_i, s_i] * ns_values)
+                expected_reward = np.sum(self.tranProbMatrix_cpu[a_i, s_i] * self.e_rewardMatrix_cpu[a_i, s_i])
                 self.e_qD_cpu[s][a] = expected_reward + self.vi_params["gamma"] * expected_ns_val
 
-            max_q, sum_q = max(self.e_qD_cpu[s].values()), sum(self.e_qD_cpu[s].values())
-            new_val = (1 - self.vi_params["slip_prob"]) * max_q + self.vi_params["slip_prob"] * sum_q
+            new_val = np.max(self.qD_cpu[s_i])
 
             backup_error = max(backup_error, abs(new_val - self.e_vD_cpu[s]))
             self.e_vD_cpu[s_i] = new_val
@@ -659,23 +676,7 @@ class FullMDP(object):
 
         self.e_curr_vi_error = backup_error
 
-    def safe_bellman_backup_step_cpu(self):
-        backup_error = 0
-        for s, s_i in self.s2i.items():
-            for a, a_i in self.a2i.items():
-                expected_ns_val = np.sum(self.tranProbMatrix_cpu[a_i, s_i] *
-                                         np.array([self.s_vD_cpu[ns] for ns in self.tranidxMatrix_cpu[a_i, s_i]]))
-                expected_reward = np.sum(self.tranProbMatrix_cpu[a_i, s_i] * self.rewardMatrix_cpu[a_i, s_i])
-                self.s_qD_cpu[s_i, a_i] = expected_reward + self.vi_params["gamma"] * expected_ns_val
 
-            max_q, sum_q = np.max(self.s_qD_cpu[s_i]), np.sum(self.s_qD_cpu[s_i])
-            new_val = (1 - self.vi_params["slip_prob"]) * max_q + self.vi_params["slip_prob"] * sum_q
-
-            backup_error = max(backup_error, abs(new_val - self.s_vD_cpu[s_i]))
-            self.s_vD_cpu[s_i] = new_val
-            self.s_pD_cpu[s_i] = np.argmax(self.s_qD_cpu[s_i])
-
-        self.s_curr_vi_error = backup_error
 
     def opt_bellman_backup_step_gpu(self):
         # Temporary variables
