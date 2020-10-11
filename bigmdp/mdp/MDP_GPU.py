@@ -533,7 +533,7 @@ class FullMDP(object):
                                                                            self.gpu_backup_counter))
                 curr_error = self.curr_vi_error
         et = time.time()
-        print("Time takedn to solve", et - st)
+        if verbose: print("Time takedn to solve", et - st)
 
     @property
     def qval_distribution(self):

@@ -58,6 +58,7 @@ class SimpleAgent(object):
         self.abstraction_threshold = abstraction_threshold
 
         # internal vars
+        self.nn_pairs = {}
         self.unseen_sa_pred_cache = {}  # predicted for unseen sa pairs
         self.in_mdp_sa_pairs = {}
         self.to_commit_sa_pairs = defaultdict(init2zero)
@@ -123,12 +124,12 @@ class SimpleAgent(object):
         for s, a, s_prime, r, d in zip(s_batch, a_batch, s_prime_batch, r_batch, d_batch):
             self.to_commit_transitions.append((s, a, s_prime, r, d))
 
-    def commit_seen_transitions(self):
+    def commit_seen_transitions(self, verbose = False):
         # Add all to commit transitions to the MDP
         # track all to predict state action pairs
-        print("Len of to commit transitions", len(self.to_commit_transitions))
-        print("ABstraction Faldg", self.abstraction_flag)
-        for s, a, s_prime, r, d in tqdm(self.to_commit_transitions):
+        if verbose: print("Len of to seed sa pairs", len(self.to_commit_transitions))
+        iterator_ = tqdm(self.to_commit_transitions) if verbose else self.to_commit_transitions
+        for s, a, s_prime, r, d in iterator_:
             self.mdp_T.consume_transition((s, a, s_prime, r, d))
 
             for a_ in self.mdp_T.A:
@@ -141,7 +142,7 @@ class SimpleAgent(object):
 
         self.mdp_T._update_nn_kd_tree()
         self.mdp_T._update_nn_kd_with_action_tree()
-        print("Len of to commit sa pairs", len(self.to_commit_sa_pairs))
+        if verbose: print("Len of to commit unseen sa pairs", len(self.to_commit_sa_pairs))
 
     def commit_predicted_transitions(self, verbose=False):
         if self.fill_with == "0Q_src-KNN":
@@ -157,6 +158,7 @@ class SimpleAgent(object):
                 knn_sa = self.mdp_T._get_knn_hs_kd_with_action_tree((s_, a_), k=self.mdp_build_k)
                 knn_sa_normalized = self.mdp_T.get_kernel_probs(knn_sa, delta=self.mdp_T.knn_delta)
                 self.dist_to_nn_cache.extend(list(knn_sa.values()))
+                self.nn_pairs[(s_,knn_sa.items()[0])] =knn_sa.items()[1]
 
                 # get new transition counts
                 tran_counts, reward_counts = defaultdict(init2zero), defaultdict(init2zero)
@@ -207,9 +209,9 @@ class SimpleAgent(object):
 
         return disc_reward
 
-    def solve_mdp(self):
+    def solve_mdp(self, verbose = False):
         self.mdp_T.curr_vi_error = 10
-        self.mdp_T.solve(eps=0.001, mode="GPU", safe_bkp=True)
+        self.mdp_T.solve(eps=0.001, mode="GPU", safe_bkp=True, verbose = verbose)
         self.qvalDict_cache = cpy(self.mdp_T.qvalDict)
         self.valueDict_cache = cpy(self.mdp_T.valueDict)
 
@@ -226,7 +228,8 @@ class SimpleAgent(object):
 
         _batch_size = 256
         start_end_indexes = get_iter_indexes(len(train_buffer), _batch_size)
-        for start_i, end_i in tqdm(start_end_indexes):
+        iterator_ = tqdm(start_end_indexes) if verbose else start_end_indexes
+        for start_i, end_i in iterator_:
             batch = train_buffer.sample_indices(list(range(start_i, end_i)))
             batch_ob, batch_a, batch_ob_prime, batch_r, batch_nd = batch
             batch_d = 1 - batch_nd
@@ -237,14 +240,14 @@ class SimpleAgent(object):
         if verbose: print("Step 2 [Seed Seen Transitions + Unknown (s,a) pairs]:  Running")
         st = time.time()
 
-        self.commit_seen_transitions()
+        self.commit_seen_transitions(verbose=verbose)
 
         if verbose: print("Step 2 (Commit Seen Transitions):  Complete,  Time Elapsed: {} \n\n".format(time.time() - st))
         if verbose: print("Step 3 [Commit all Transitions]:  Running")
         st = time.time()
 
-        self.commit_predicted_transitions(verbose=True)
-        
+        self.commit_predicted_transitions(verbose=verbose)
+
         if verbose: print("Step 3 (Commit UnSeen Transitions):  Complete,  Time Elapsed: {}".format(time.time() - st))
         if verbose: print("Step 4 [Solve MDP]:  Running")
         st = time.time()
@@ -255,6 +258,24 @@ class SimpleAgent(object):
 
         if verbose: print("% of missing trans", self.mdp_T.unknown_state_action_count / (len(self.mdp_T.tD) * len(self.mdp_T.A)))
         if verbose: print("Step 4 [Solve MDP]:  Complete,  Time Elapsed: {}\n\n".format(time.time() - st))
+
+
+    def contract_mdp(self, contract_perc=0.1):
+        # sort the nn_pairs
+
+        # iterate and pop sa_pairs till contract percentage is staisfied
+
+        # for the popped states, delete known dictionaries
+
+        # pop from s2i and put it in the free pool
+
+        # iterate through tran_id_matrix and delete the fan in transitions
+
+        return 
+
+
+
+
 
     def cache_mdp(self, file_path):
         st = time.time()
