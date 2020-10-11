@@ -158,7 +158,8 @@ class SimpleAgent(object):
                 knn_sa = self.mdp_T._get_knn_hs_kd_with_action_tree((s_, a_), k=self.mdp_build_k)
                 knn_sa_normalized = self.mdp_T.get_kernel_probs(knn_sa, delta=self.mdp_T.knn_delta)
                 self.dist_to_nn_cache.extend(list(knn_sa.values()))
-                self.nn_pairs[(s_,knn_sa.items()[0])] =knn_sa.items()[1]
+                nn_sa1, dist_1 = list(knn_sa.items())[0]
+                self.nn_pairs[(s_,nn_sa1[0])] = dist_1
 
                 # get new transition counts
                 tran_counts, reward_counts = defaultdict(init2zero), defaultdict(init2zero)
@@ -271,7 +272,7 @@ class SimpleAgent(object):
 
         # iterate through tran_id_matrix and delete the fan in transitions
 
-        return 
+        return
 
 
 
