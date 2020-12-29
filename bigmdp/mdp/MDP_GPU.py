@@ -470,22 +470,21 @@ class FullMDP(object):
 
         self.KDActionTrees = {a: KDTree(np.array(st_list), leaf_size=40) for a, st_list in self.s_list_D.items()}
 
-    def _get_nn_hs_kd_with_action_tree(self, hsa):
-        hs, a = self.unhash_state_action(hsa)
-        if hs in self.omit_list:
+    def _get_nn_hs_kd_with_action_tree(self, sa):
+        s, a = sa
+        if s in self.omit_list:
             return hsa
 
-        nn_dist, nn_idx = self.KDActionTrees[a].query(np.array([hs]), k=1)
+        nn_dist, nn_idx = self.KDActionTrees[a].query(np.array([s]), k=1)
         nearest_neighbor_hs = self.s_list_D[a][int(nn_idx.squeeze())]
         nearest_neighbor_hsa = self.hash_state_action(nearest_neighbor_hs, a)
         return nearest_neighbor_hsa
 
-    def _get_knn_hs_kd_with_action_tree(self, hsa, k):
-        hs, a = self.unhash_state_action(hsa)
-        if hs in self.omit_list or not self.s_list_D:
-            return {hsa: 0}
-
-        nn_dist, nn_idx = self.KDActionTrees[a].query(np.array([hs]), k=k)
+    def _get_knn_hs_kd_with_action_tree(self, sa, k):
+        s, a = sa
+        if s in self.omit_list or not self.s_list_D:
+            return {sa: 0}
+        nn_dist, nn_idx = self.KDActionTrees[a].query(np.array([s]), k=k)
         nn_dist, nn_idx = nn_dist.reshape(-1), nn_idx.reshape(-1)
         nn_dict = {self.hash_state_action(self.s_list_D[a][int(idx)], a): nn_dist[i]
                    for i, idx in enumerate(nn_idx)}
@@ -498,11 +497,11 @@ class FullMDP(object):
         else:
             return nn_hs
 
-    def _get_knn_hs_kdtree(self, hs, k):
-        if hs in self.omit_list or not self.state_list:
-            return {hs: 0}
+    def _get_knn_hs_kdtree(self, s, k):
+        if s in self.omit_list or not self.state_list:
+            return {s: 0}
 
-        nn_dist, nn_idx = self.KDTree.query(np.array([hs]), k=k)
+        nn_dist, nn_idx = self.KDTree.query(np.array([s]), k=k)
         nn_dist, nn_idx = nn_dist.reshape(-1), nn_idx.reshape(-1)
         nn_dict = {self.state_list[int(idx)]: nn_dist[i] for i, idx in enumerate(nn_idx)}
         return nn_dict

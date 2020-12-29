@@ -6,3 +6,4 @@ bigmdp.egg-info
 *__pycache__*
 scraps
 *.ipynb_checkpoint*
+venv

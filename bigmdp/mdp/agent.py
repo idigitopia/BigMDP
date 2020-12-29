@@ -18,6 +18,7 @@ MDPUnit = namedtuple('MDPUnit', 'tranProb origReward dist')
 import pickle as pk
 from os import path
 
+verbose_iterator = lambda it,vb: tqdm(it) if vb else it
 
 class SimpleAgent(object):
     """
@@ -52,6 +53,10 @@ class SimpleAgent(object):
         self.plcy_k = plcy_k or mdp_build_k
         self.soft_at_plcy = soft_at_plcy
         self.kNN_on_sa = kNN_on_sa
+
+        # KNN Params
+        self.known_tC = defaultdict(init2zero_def_def_dict)
+        self.known_rC = defaultdict(init2zero_def_def_dict)
 
         # Abstraction Flags
         self.abstraction_flag = abstraction_flag
@@ -132,12 +137,18 @@ class SimpleAgent(object):
         for s, a, s_prime, r, d in iterator_:
             self.mdp_T.consume_transition((s, a, s_prime, r, d))
 
+            # cache for knn predictions
+            s_prime = "end_state" if d else s_prime
+            self.known_tC[s][a][s_prime] += 1
+            self.known_rC[s][a][s_prime] += r
+
+
             for a_ in self.mdp_T.A:
                 sa_pair = (s, a_)
                 # 1 for seen sa_pair, 0 for unseen
                 self.to_commit_sa_pairs[sa_pair] = 1 if a_ == a or self.to_commit_sa_pairs[sa_pair] == 1 else 0
 
-                if (s_prime, a_) not in self.to_commit_sa_pairs and not d:
+                if not d and (s_prime, a_) not in self.to_commit_sa_pairs:
                     self.to_commit_sa_pairs[(s_prime, a_)] = 0
 
         self.mdp_T._update_nn_kd_tree()
@@ -157,6 +168,8 @@ class SimpleAgent(object):
                 # get distances
                 knn_sa = self.mdp_T._get_knn_hs_kd_with_action_tree((s_, a_), k=self.mdp_build_k)
                 knn_sa_normalized = self.mdp_T.get_kernel_probs(knn_sa, delta=self.mdp_T.knn_delta)
+
+                # houskeeping Code
                 self.dist_to_nn_cache.extend(list(knn_sa.values()))
                 nn_sa1, dist_1 = list(knn_sa.items())[0]
                 self.nn_pairs[(s_,nn_sa1[0])] = dist_1
@@ -166,8 +179,8 @@ class SimpleAgent(object):
                 for nn_sa in knn_sa_normalized:
                     nn_s, a = nn_sa
                     norm_dist, dist = knn_sa_normalized[nn_sa], knn_sa[nn_sa]
-                    for nn_ns in list(self.mdp_T.known_tC[nn_s][a].keys()):
-                        orig_tr, orig_tc = self.mdp_T.known_tC[nn_s][a][nn_ns], self.mdp_T.known_rC[nn_s][a][nn_ns]
+                    for nn_ns in list(self.known_tC[nn_s][a].keys()):
+                        orig_tc, orig_tr = self.known_tC[nn_s][a][nn_ns], self.known_rC[nn_s][a][nn_ns]
                         count_ = int(norm_dist * 100 * orig_tc) if self.norm_by_dist else 1
                         tran_counts[nn_ns] += count_
                         disc_reward = self.get_reward_logic(orig_tr / orig_tc, dist, self.penalty_type,

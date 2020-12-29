@@ -7,13 +7,13 @@ import copy
 
 def ReplayBuffer(state_dim, is_atari, atari_preprocessing, batch_size, buffer_size, device):
     if is_atari:
-        return AtariBuffer(state_dim, atari_preprocessing, batch_size, buffer_size, device)
+        return AtariBuffer(atari_preprocessing, batch_size, buffer_size, device)
     else:
         return StandardBuffer(state_dim, batch_size, buffer_size, device)
 
 
 class AtariBuffer(object):
-    def __init__(self, state_dim, atari_preprocessing, batch_size, buffer_size, device):
+    def __init__(self, atari_preprocessing, batch_size, buffer_size, device):
         self.batch_size = batch_size
         self.max_size = int(buffer_size)
         self.device = device
@@ -133,7 +133,7 @@ class AtariBuffer(object):
             end = min(end + chunk, self.crt_size + 1)
 
     def __len__(self):
-        return self.crt_size - 1
+        return self.crt_size
 
 
 # Generic replay buffer for standard gym tasks
@@ -152,7 +152,7 @@ class StandardBuffer(object):
         self.reward = np.zeros((self.max_size, 1))
         self.not_done = np.zeros((self.max_size, 1))
 
-    def add(self, state, action, next_state, reward, done, episode_done, episode_start):
+    def add(self, state, action, next_state, reward, done, episode_done=None, episode_start=None):
         self.state[self.ptr] = state
         self.action[self.ptr] = action
         self.next_state[self.ptr] = next_state
@@ -200,7 +200,7 @@ class StandardBuffer(object):
         print(f"Replay Buffer loaded with {self.crt_size} elements.")
 
     def __len__(self):
-        return self.crt_size - 1
+        return self.crt_size
 
 
 
